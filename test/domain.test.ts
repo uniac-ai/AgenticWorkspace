@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fixtureAuthority } from "../examples/authority.js";
 import { WorkspaceError } from "../src/contracts/index.js";
+import { createForms } from "../src/forms/index.js";
 import { bindWorkspace } from "../src/index.js";
 import { openSqlite } from "../src/persistence/index.js";
 
@@ -62,17 +63,17 @@ for (const requesterClient of ["human", "software"] as const)
       );
       assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
       const form = requester.forms.create({
-        workID: ticket.ticketID,
         respondentIDs: ["respondent"],
         fields: [
           { name: "decision", label: "Which option?", required: true, options: ["yes", "no"] },
         ],
       });
       assert.equal(respondent.forms.get({ formID: form.formID }).formID, form.formID);
+      assert.equal(form.workID, undefined);
       assert.throws(() => respondent.work.get({ ticketID: ticket.ticketID }), rejects("not_found"));
       assert.throws(
         () =>
-          owner.forms.respond({
+          requester.forms.respond({
             formID: form.formID,
             expectedRevision: 1,
             answers: { decision: "yes" },
@@ -124,6 +125,16 @@ for (const requesterClient of ["human", "software"] as const)
         resolution: "Decision recorded",
       });
       assert.equal(closed.status, "resolved");
+      assert.throws(
+        () =>
+          requester.forms.close({
+            formID: form.formID,
+            expectedRevision: response.revision,
+            status: "resolved",
+            resolution: "Stale close",
+          }),
+        rejects("conflict"),
+      );
       assert.throws(
         () =>
           respondent.forms.respond({
@@ -288,6 +299,53 @@ test("direct messages need no work and arbitrary prose creates no record", (t) =
       }),
     rejects("not_found"),
   );
+});
+
+test("standalone forms never consult Work; linked forms retain validation and current-party visibility", (t) => {
+  const f = fixture(t);
+  const requester = f.as("requester");
+  const owner = f.as("owner");
+  const outsider = f.as("outsider");
+  const withoutWork = createForms(requester.actors, f.store);
+  const trap = { get: () => assert.fail("standalone Form consulted Work") };
+  const directed = createForms(owner.actors, f.store, trap);
+  const hidden = createForms(outsider.actors, f.store, trap);
+  const input = {
+    respondentIDs: ["owner"],
+    fields: [{ name: "answer", label: "Which option?", required: true }],
+  };
+  const form = createForms(requester.actors, f.store, trap).create(input);
+  assert.deepEqual(directed.get({ formID: form.formID }), form);
+  assert.deepEqual(directed.list().items, [form]);
+  assert.deepEqual(hidden.list().items, []);
+  assert.throws(() => hidden.get({ formID: form.formID }), rejects("not_found"));
+  assert.throws(
+    () => withoutWork.create({ ...input, respondentIDs: ["absent"] }),
+    rejects("not_found"),
+  );
+  const ticket = requester.work.create({ goal: "Optional linked context", ownerID: "owner" });
+  assert.throws(
+    () => withoutWork.create({ ...input, workID: ticket.ticketID }),
+    rejects("invalid_input"),
+  );
+  assert.throws(
+    () => outsider.forms.create({ ...input, workID: ticket.ticketID }),
+    rejects("not_found"),
+  );
+  const linked = requester.forms.create({
+    ...input,
+    respondentIDs: ["respondent"],
+    workID: ticket.ticketID,
+  });
+  assert.equal(owner.forms.get({ formID: linked.formID }).workID, ticket.ticketID);
+  requester.work.update({ ticketID: ticket.ticketID, expectedRevision: 1, ownerID: "outsider" });
+  assert.throws(() => owner.forms.get({ formID: linked.formID }), rejects("not_found"));
+  assert.deepEqual(
+    owner.forms.list().items.map((row) => row.formID),
+    [form.formID],
+  );
+  assert.equal(outsider.forms.get({ formID: linked.formID }).formID, linked.formID);
+  assert.equal(f.as("respondent").forms.get({ formID: linked.formID }).formID, linked.formID);
 });
 
 test("revision conflicts across independent SQLite connections roll back snapshots and history", async (t) => {

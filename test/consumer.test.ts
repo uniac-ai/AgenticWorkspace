@@ -90,9 +90,14 @@ try {
     MessageContracts.message_handle;
   }
   publicTypes(direct);
-  const forms = createForms(actors,work,store);
+  const forms = createForms(actors,store);
   const ticket = Work.parse(work.create({goal:'Consume exported clients',ownerID:'self'}));
-  forms.create({workID:ticket.ticketID,respondentIDs:['self'],fields:[{name:'answer',label:'Ready?',required:true}]});
+  const form = forms.create({respondentIDs:['peer'],fields:[{name:'answer',label:'Ready?',required:true}]});
+  assert.equal(Object.hasOwn(form,'workID'),false);
+  const peerForms = createForms(createActors(authority,'peer'),store);
+  const answered = peerForms.respond({formID:form.formID,expectedRevision:1,answers:{answer:'yes'}});
+  const closed = forms.close({formID:form.formID,expectedRevision:answered.revision,status:'resolved',resolution:'Agreed'});
+  assert.equal(closed.status,'resolved');
   const clients = bindWorkspace(authority,store,'self');
   for (const purpose of ['execution','viewer'] as const) {
     const server = createMcpServer(clients,purpose);
@@ -102,6 +107,10 @@ try {
       await server.connect(a); await client.connect(b);
       const tools = (await client.listTools()).tools;
       assert.equal(tools.length,purpose==='execution'?16:8);
+      const formTool = tools.find(tool=>tool.name==='form_get');
+      assert.equal(formTool?.outputSchema?.required?.includes('workID'),false);
+      const formRead = await client.callTool({name:'form_get',arguments:{formID:form.formID}});
+      assert.deepEqual(formRead.structuredContent,closed);
       assert.deepEqual(tools.filter(tool=>tool.name.startsWith('message_')).map(tool=>tool.name).sort(),purpose==='execution'?['message_get','message_list','message_send']:['message_get','message_list']);
       const properties = tools.find(tool=>tool.name==='message_get')?.outputSchema?.properties;
       assert.ok(properties && typeof properties==='object');

@@ -4,17 +4,15 @@ The lasting accepted references are [Workspace first version tool list](https://
 
 ## Component dependencies
 
-Arrows point toward a dependency; the dashed edge is optional. Work is a logical component containing two separately maintained modules.
+Arrows point toward a dependency; dashed edges are optional. Forms and Work tracking are separate modules; a Form can stand alone.
 
 ```mermaid
 flowchart BT
     A["Actors<br/>Identity and discovery"]
     M["Messages<br/>Persistent direct messaging"]
-    subgraph W["Work"]
-        T["Work tracking<br/>Ticket, owner, progress, result and review"]
-        F["Forms and questions<br/>Fields, respondents, responses and resolution"]
-        F -->|"requires work ID"| T
-    end
+    T["Work tracking<br/>Ticket, owner, progress, result and review"]
+    F["Forms and questions<br/>Fields, respondents, responses and resolution"]
+    F -.->|"optional work reference"| T
     M -->|"sender and recipient"| A
     T -->|"owner and participants"| A
     F -->|"requester and respondents"| A
@@ -39,9 +37,9 @@ Both MCP exposures use the same Actor identity and role rules. The execution ser
 | Actors        | Injected canonical authority and admitted caller  | `ActorsClient.get/list`                            | No persisted state; no lifecycle administration                                  |
 | Messages      | Actors; optional WorkReader; Messages persistence | `MessagesClient.send/get/list`                     | Content, parties, optional work context, send history                            |
 | Work tracking | Actors; Work persistence                          | `WorkClient` and its read-only `WorkReader` subset | Tickets, requester, owner, goal, progress/status, submission, review, history    |
-| Forms         | Actors; required WorkReader; Forms persistence    | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution |
+| Forms         | Actors; optional WorkReader; Forms persistence    | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution |
 
-Work does not import Messages or Forms. A Work ticket needs neither. Direct messages need no work ticket; a reply is another flat direct message. Optional references must identify existing readable work and have no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Forms require an existing readable work ticket. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
+Work does not import Messages or Forms. A Work ticket needs neither. Direct messages and Forms need no work ticket or Work client; a reply is another flat direct message. Optional references must identify existing readable work and have no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Linked Forms additionally allow current Work parties to read them. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
 
 The root composition factory wires distinct clients; it is not another multi-domain operation client. Consumers can construct and use any module independently through its own export. Contracts depend only on Zod. Domain modules import persistence types; native SQLite is loaded only through the persistence implementation export.
 

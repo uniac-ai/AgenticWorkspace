@@ -13,7 +13,7 @@ export function bindWorkspace(authority: ActorAuthority, store: WorkspaceStore, 
     actors,
     work,
     messages: createMessages(actors, store, work),
-    forms: createForms(actors, work, store),
+    forms: createForms(actors, store, work),
   };
 }
 export type WorkspaceClients = ReturnType<typeof bindWorkspace>;

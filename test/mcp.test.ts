@@ -123,7 +123,6 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
     for (const client of [owner, viewer])
       await refused(client, removed, { messageID: message.messageID }, "not_found");
   const form = await call<Form>(requester, "form_create", {
-    workID: ticket.ticketID,
     respondentIDs: ["owner"],
     fields: [{ name: "answer", label: "Proceed?", required: true }],
   });
@@ -134,10 +133,11 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   });
   const changed = await call<Form>(viewer, "form_get", { formID: form.formID });
   assert.equal(changed.responses.owner?.answer, "yes");
-  assert.equal(
-    (await call<Page<Form>>(viewer, "form_list", { workID: ticket.ticketID })).items.length,
-    1,
-  );
+  assert.equal((await call<Page<Form>>(viewer, "form_list")).items.length, 1);
+  assert.equal(Object.hasOwn(form, "workID"), false);
+  const formProperties = tools.find((tool) => tool.name === "form_create")?.inputSchema;
+  assert.ok(formProperties);
+  assert.equal(formProperties.required?.includes("workID"), false);
   await call(requester, "form_close", {
     formID: form.formID,
     expectedRevision: changed.revision,

@@ -1,4 +1,4 @@
-/** Structured work-linked interactions with their own responses and resolution. */
+/** Structured interactions with optional work context, responses and resolution. */
 import { randomUUID } from "node:crypto";
 import { type ActorsClient, activeActor } from "../actors/index.js";
 import {
@@ -24,12 +24,13 @@ export interface FormsClient {
 }
 export function createForms(
   actors: ActorsClient,
-  work: WorkReader,
   store: Pick<WorkspaceStore, "forms" | "transaction">,
+  work?: WorkReader,
 ): FormsClient {
   const table = store.forms;
   function visible(row: FormState, caller: string): boolean {
     if (row.requesterID === caller || row.respondentIDs.includes(caller)) return true;
+    if (row.workID === undefined || work === undefined) return false;
     try {
       work.get({ ticketID: row.workID });
       return true;
@@ -51,7 +52,10 @@ export function createForms(
     create(input) {
       const request = parse(FormContracts.form_create.input, input);
       const caller = actors.get().actorID;
-      work.get({ ticketID: request.workID });
+      if (request.workID !== undefined) {
+        requireThat(work, "invalid_input", "work references require a Work client");
+        work.get({ ticketID: request.workID });
+      }
       requireThat(
         new Set(request.respondentIDs).size === request.respondentIDs.length,
         "invalid_input",

@@ -19,7 +19,7 @@ Every successful mutation returns the full resulting record with stable ID, revi
 | work_update  | `{ticketID,expectedRevision,goal?,ownerID?,progress?,status?:open\|active\|blocked}`   | Update at least one allowed field                |
 | work_submit  | `{ticketID,expectedRevision,result,evidence[]}`                                        | Persist new submissionID, result/evidence        |
 | work_review  | `{ticketID,expectedRevision,submissionID,verdict:accepted\|changes_requested,comment}` | Review the exact current submission              |
-| form_create  | `{workID,respondentIDs[],fields:[{name,label,required,options?}]}`                     | Create work-linked interaction                   |
+| form_create  | `{workID?,respondentIDs[],fields:[{name,label,required,options?}]}`                    | Create independent or work-linked interaction    |
 | form_get     | `{formID}`                                                                             | Read record/history                              |
 | form_list    | `{workID?,after?,limit?}`                                                              | Read visible current upserts                     |
 | form_respond | `{formID,expectedRevision,answers:{field:value}}`                                      | Add/revise designated respondent's answers       |
@@ -31,7 +31,7 @@ Form answers are strings. Every response supplies a complete answer set: require
 
 - Messages are private to sender/recipient and expose only send/get/list. A reply is another direct message. Messages have no public read or handling state, and retrieval leaves the sent record and history unchanged. New recipient must be active. Optional `workID` must exist and be readable by sender; it supplies context without changing Work or Form state.
 - Work is private to requester/current owner. Requester edits goal/owner and reviews. Current owner updates progress/status and submits. Reassignment removes the previous owner's Work access and grants the new owner access, subject to other independent record roles. New owner must be active.
-- A Work party creates a form. Form requester, designated respondents, and current Work parties may read it. Only designated respondents answer while open; only form requester closes. Responding/closing never mutates Work. Closure does not require every respondent to have answered. Active callers retain authorized history reads when counterparties close.
+- Any active caller may create a Form for active visible respondents. Form requester and designated respondents may read it. Optional `workID` must exist and be readable by the creator; current linked Work parties also gain read access. Without `workID`, Forms never consult Work. Only designated respondents answer while open; only form requester closes. Responding/closing never mutates Work. Closure does not require every respondent to have answered. Active callers retain authorized history reads when counterparties close.
 
 ## Work transitions and concurrency
 

@@ -11,7 +11,7 @@ try {
   const actors = createActors(fixtureAuthority().authority, "requester");
   const work = createWork(actors, store);
   const messages = createMessages(actors, store, work);
-  const forms = createForms(actors, work, store);
+  const forms = createForms(actors, store);
   const ticket = work.create({ goal: "Review the public client composition", ownerID: "owner" });
   messages.send({
     recipientID: "owner",
@@ -19,7 +19,6 @@ try {
     workID: ticket.ticketID,
   });
   forms.create({
-    workID: ticket.ticketID,
     respondentIDs: ["owner"],
     fields: [{ name: "ready", label: "Ready for review?", required: true }],
   });

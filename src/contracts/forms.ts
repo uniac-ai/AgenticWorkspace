@@ -9,7 +9,7 @@ export const Field = z.strictObject({
 });
 export const FormState = z.strictObject({
   formID: ID,
-  workID: ID,
+  workID: ID.optional(),
   requesterID: ID,
   respondentIDs: z.array(ID).min(1).max(100),
   fields: z.array(Field).min(1).max(100),
@@ -25,9 +25,9 @@ const formID = z.strictObject({ formID: ID });
 const mutation = formID.extend({ expectedRevision: Revision });
 export const FormContracts = {
   form_create: contract(
-    "Create a work-linked form as a work party; one field is a question.",
+    "Create a form, optionally linked to readable work; one field is a question.",
     z.strictObject({
-      workID: ID,
+      workID: ID.optional(),
       respondentIDs: z.array(ID).min(1).max(100),
       fields: z.array(Field).min(1).max(100),
     }),
