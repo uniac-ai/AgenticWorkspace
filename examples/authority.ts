@@ -1,0 +1,65 @@
+/** Model-free canonical authority fixture. This is example data, not a production registry. */
+import type { ActorAuthority } from "../src/actors/index.js";
+import { type Actor, requireThat } from "../src/contracts/index.js";
+
+export function fixtureAuthority(
+  requesterKind: "human" | "software" = "human",
+  ownerKind: "human" | "software" = "software",
+) {
+  const rows = new Map<string, Actor>([
+    [
+      "requester",
+      {
+        actorID: "requester",
+        name: "Requester",
+        purpose: "Request and review fixture work",
+        state: "active",
+        kind: requesterKind,
+      },
+    ],
+    [
+      "owner",
+      {
+        actorID: "owner",
+        name: "Owner",
+        purpose: "Execute fixture work",
+        state: "active",
+        kind: ownerKind,
+      },
+    ],
+    [
+      "respondent",
+      {
+        actorID: "respondent",
+        name: "Respondent",
+        purpose: "Answer fixture forms",
+        state: "active",
+        kind: "human",
+      },
+    ],
+    [
+      "outsider",
+      {
+        actorID: "outsider",
+        name: "Outsider",
+        purpose: "Test authority boundaries",
+        state: "active",
+        kind: "software",
+      },
+    ],
+  ]);
+  const authority: ActorAuthority = {
+    get: (_caller, id) => rows.get(id),
+    list: (_caller, query) => {
+      const all = [...rows.values()];
+      requireThat(
+        query.after <= all.length,
+        "invalid_input",
+        "directory cursor is beyond fixture head",
+      );
+      const items = all.slice(query.after, query.after + query.limit);
+      return { items, after: query.after + items.length };
+    },
+  };
+  return { authority, rows };
+}

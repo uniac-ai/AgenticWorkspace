@@ -1,0 +1,38 @@
+# Hub adapter checkpoint
+
+**Settled placement:** separate AgenticWorkspace repository, eventually installed as a package inside Hub. Hub owns canonical Actor identity/state, connection admission and explicit Tool exposure. The workspace receives the immutable admitted Actor ID through an injected canonical authority client. No remote identity delegation service or second Actor registry is needed. This repository does not modify Hub or claim production integration readiness.
+
+Source evidence was read without runtime calls at AgentOrg replacement revision **cca137062a9c2d979d134da9a191739d9fefe9c4**, local and origin `codex/hub-tools-only`. Local primary `main`/`origin/main` was **7eb6d71cb59351dcbd7996b9769a9c2f9c4b7b8f** at the inspection. These are source observations, not deployment claims.
+
+## Explicit composition mapping
+
+| Hub source at replacement revision                         | Existing responsibility                                                                                     | Proposed package binding                                                                                                            |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/index.ts` + `src/connection/index.ts`          | Validate canonical Actor and credential/admission policy; bind immutable connection principal               | Keep this admission; pass admitted actorID to package client construction                                                           |
+| `src/domain/registry.ts`                                   | Canonical rows, identity, profiles and closure                                                              | Host-owned `ActorAuthority.get/list` projection, with canonical visibility and open/closed state                                    |
+| `src/domain/index.ts`                                      | Compose explicit `FeatureTool`s into `capabilities([...])`                                                  | Install package, construct module clients, bind explicit feature operations at this composition root                                |
+| `src/domain/tools.ts`                                      | `bindTool` maps contract definitions to feature operations receiving canonical ActorRow                     | Map Actors lookup, Messages, Work tracking and Forms to their distinct clients; use supplied ActorRow.id, never tool input identity |
+| `src/domain/capabilities.ts` + `src/domain/application.ts` | Derive discovery and invocation from explicit operations; parse input, validate current Actor, audit writes | Derive each feature's schemas from package contracts; preserve Hub's active-caller/admission/audit responsibility                   |
+| `src/bindings/mcp/inbound.ts`                              | SDK server for admitted Actor; list/call through Hub application                                            | Keep this front door; avoid starting the fixture stdio server inside Hub                                                            |
+| `src/contract/index.ts`                                    | Public Hub wire contracts                                                                                   | Export only the settled workspace projection needed by Hub clients                                                                  |
+
+Links: [composition](https://github.com/uniac-ai/AgentOrg/blob/cca137062a9c2d979d134da9a191739d9fefe9c4/src/domain/index.ts), [feature registration](https://github.com/uniac-ai/AgentOrg/blob/cca137062a9c2d979d134da9a191739d9fefe9c4/src/domain/tools.ts), [admission](https://github.com/uniac-ai/AgentOrg/blob/cca137062a9c2d979d134da9a191739d9fefe9c4/src/server/index.ts), [MCP serving](https://github.com/uniac-ai/AgentOrg/blob/cca137062a9c2d979d134da9a191739d9fefe9c4/src/bindings/mcp/inbound.ts).
+
+The replacement exposes Tools explicitly and has no configurable package-extension slot today. Installed-package integration therefore requires a small separately reviewed Hub composition change. Actor advertisement/reverse invocation is not an extension path. Public Actor callers consume Hub operations; they do not register feature modules.
+
+## Overlap and migration decisions still open
+
+Legacy Hub Messages exposes `message_send`, `messages`, and `message_read`. Workspace Messages also exposes `message_send`; simply appending both features would create duplicate invocation aliases. The replacement dispatch chooses the first matching interface alias. This must be resolved explicitly before wiring. Old Hub `question_ask/question_answer/questions` has no required Work ID, while every workspace Form requires one. Hub team views also consume existing correspondence; their read dependency must be mapped if that owner changes.
+
+The smallest choices for parent/human settlement are:
+
+1. **Make workspace the selected correspondence owner during a coordinated client cutover.** Remove legacy message/question writes from explicit exposure and update consumers to the settled workspace operations. Migrate direct messages only through an agreed ID/party/read-ack mapping; never infer handled outcomes. Retain old questions until the owner supplies an existing Work association or chooses their archive treatment. This keeps one correspondence authority, but requires a consumer and retention plan.
+2. **Keep legacy correspondence authoritative for the initial Hub integration and expose only nonoverlapping workspace modules there.** Standalone workspace Messages remains testable here but unexposed in Hub until cutover is settled. Work/Forms can be evaluated without introducing a duplicate message front door. This is a partial integration, not completion of all 18 Hub-exposed operations.
+
+Recommendation: settle the complete single-owner cutover before enabling all workspace Tools. Do not silently migrate old records, fabricate Work tickets for old questions, preserve excluded remote-call compatibility, or add a second message-writing alias as an incidental adapter detail. No overlap/migration choice is implemented or approved by this checkpoint.
+
+## Runtime and verification boundary
+
+This fixture pins Node **24.22.1** and uses built-in SQLite. Replacement Hub declares Node **>=22.13**. A future adapter review must either validate package/persistence behavior on Hub's supported Node22/24 hosts, choose a different compatible persistence implementation behind `WorkspaceStore`, or explicitly approve a host engine change. The fixture choice does not silently expand Hub's runtime requirements. Package clients use synchronous canonical authority reads and synchronous storage transactions; adapters must preserve that boundary or revisit it explicitly.
+
+Genuine integration verification needs a separately authorized isolated Hub fixture at an exact selected revision, canonical admission/revocation/closure tests, explicit feature discovery/invocation, overlap resolution, and public Hub client proof against the same records. Existing protected Human54292, Provider8787, Hub60805, SSH58509 and old54289/54290 are untouched. No real Actor creation, credentials, model turns, live-state migration or native-session controls are used in this delivery.
