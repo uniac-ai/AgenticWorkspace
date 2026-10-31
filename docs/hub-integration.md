@@ -1,4 +1,8 @@
-# Hub authority and organization-view binding
+# Hub authority and Message query binding
+
+Workspace 0.4.0 adds only optional `counterpartyID` and `before` to `message_list`. Omitted additions preserve old forward request normalization/defaults and the original ascending Page/Message/history/output schema. The same three Message aliases remain private; Hub derives the new input contract through its ordinary binding, without changing admission, host authority or Provider state. Recent/older queries require a peer and after0, with their older boundary separate from forward polling; see [Message windows](contracts.md#message-windows).
+
+The accepted System baseline is Hub `00f0ff3157148f0c39d3c9f1b21155588edf7045`. All Message operations remain excluded from operation-specific invocation diagnostics and diagnostic output, including malformed/refused new queries. This repository does not modify Hub. A separate Hub query integration must verify these exclusions and frozen Provider receipt/restart/scope/baseline/unknown behavior before its acceptance. Workspace validates the candidate with unchanged frozen public SDK wire/default/schema/251-page consumers; that is distinct from actual Provider receipt execution against a candidate Hub. No Provider rebuild/reset/replay or live runtime input is included.
 
 The accepted organization-view baseline is Workspace **3d20dd7d85fc8f95787e14f1eb63d86d4db05fbe** (package 0.2.0) and Hub **d215d2d91c19c762f4ca78a9b134007c58d40935**. That delivery is complete. Workspace 0.3.0 extends the required host authority contract; this repository changes only the package, fixtures, tests and documentation. Hub/client integration and final package adoption remain separately owned.
 

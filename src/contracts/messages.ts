@@ -22,8 +22,17 @@ export const MessageContracts = {
   ),
   message_get: contract("Read a message as one of its parties.", messageID, Message),
   message_list: contract(
-    "Traverse current visible incoming/outgoing message upserts.",
-    ListInput.extend({ direction: z.enum(["incoming", "outgoing", "all"]).default("all") }),
+    "List private correspondence forward, or select the newest peer window before latest/an exclusive cursor; return ascending rows.",
+    ListInput.extend({
+      direction: z.enum(["incoming", "outgoing", "all"]).default("all"),
+      counterpartyID: ID.optional(),
+      before: z
+        .union([z.literal("latest"), z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)])
+        .optional(),
+    }).refine(
+      (query) =>
+        query.before === undefined || (query.counterpartyID !== undefined && query.after === 0),
+    ),
     pageOf(Message),
   ),
 };

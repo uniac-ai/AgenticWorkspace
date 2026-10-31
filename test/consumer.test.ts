@@ -86,6 +86,12 @@ try {
   assert.notEqual(reply.messageID,direct.messageID);
   assert.deepEqual(messages.get({messageID:direct.messageID}),direct);
   assert.deepEqual(messages.list({direction:'incoming'}).items,[reply]);
+  const legacyList: (input?:{after?:number;limit?:number;direction?:'incoming'|'outgoing'|'all'})=>{items:Message[];after:number} = messages.list;
+  assert.deepEqual(legacyList({direction:'incoming'}).items,[reply]);
+  const latest = messages.list({counterpartyID:'peer',before:'latest',limit:1});
+  assert.deepEqual(latest,{items:[reply],after:reply.cursor});
+  assert.deepEqual(messages.list({counterpartyID:'peer',before:latest.items[0]!.cursor}),{items:[direct],after:direct.cursor});
+  assert.deepEqual(Object.keys(latest).sort(),['after','items']);
   assert.deepEqual(direct.history.map(entry=>entry.action),['sent']);
   for (const field of ['acknowledgedAt','handling'])
     assert.equal(Message.safeParse({...direct,[field]:field==='handling'?{outcome:'Done',at:direct.createdAt}:direct.createdAt}).success,false);
@@ -154,6 +160,13 @@ try {
         assert.equal(sent.isError,undefined);
         assert.deepEqual(Object.keys(sent.structuredContent!).sort(),messageKeys);
       }
+      const recent = await client.callTool({name:'message_list',arguments:{counterpartyID:'peer',before:'latest',limit:1}});
+      assert.equal((recent.structuredContent as {items:Message[]}).items[0]?.text,'Installed MCP message');
+      assert.deepEqual(Object.keys(recent.structuredContent!).sort(),['after','items']);
+      const noAuthority = await client.callTool({name:'message_list',arguments:{counterpartyID:'self',before:'latest'}});
+      assert.deepEqual(noAuthority.structuredContent,{items:[],after:0});
+      const mixed = await client.callTool({name:'message_list',arguments:{counterpartyID:'peer',before:'latest',after:1}});
+      assert.equal(mixed.isError,true);
       const read = await client.callTool({name:'message_get',arguments:{messageID:direct.messageID}});
       assert.equal(read.isError,true);
       assert.equal(JSON.parse((read.content as {text:string}[])[0]!.text).code,'not_found');
@@ -193,7 +206,7 @@ try {
       readFileSync(join(dir, "node_modules/@uniac/agentic-workspace/package.json"), "utf8"),
     );
     assert.equal(installed.private, true);
-    assert.equal(installed.version, "0.3.0");
+    assert.equal(installed.version, "0.4.0");
     assert.equal(Object.keys(installed.exports).length, 8);
   } finally {
     rmSync(dir, { recursive: true, force: true });

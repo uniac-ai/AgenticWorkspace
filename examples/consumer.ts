@@ -25,6 +25,7 @@ try {
   const reader = createActors(fixtureAuthority().authority, "outsider");
   console.log(
     JSON.stringify({
+      conversation: messages.list({ counterpartyID: "owner", before: "latest", limit: 20 }),
       ticket: createWork(reader, store).get({ ticketID: ticket.ticketID }),
       assigned: work.list({ ownerWithin: "owner", requesterWithin: "requester", status: "open" }),
       awaiting: createForms(reader, store).list({

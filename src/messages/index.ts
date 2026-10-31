@@ -58,16 +58,27 @@ export function createMessages(
     list(input = {}) {
       const query = parse(MessageContracts.message_list.input, input);
       const caller = actors.get().actorID;
-      return traverse(
-        table,
-        query,
-        (row) =>
-          visible(row, caller) &&
-          (query.direction === "all" ||
-            (query.direction === "incoming"
-              ? row.recipientID === caller
-              : row.senderID === caller)),
-      );
+      const matches = (row: MessageState) =>
+        visible(row, caller) &&
+        (query.counterpartyID === undefined ||
+          (row.senderID === caller && row.recipientID === query.counterpartyID) ||
+          (row.recipientID === caller && row.senderID === query.counterpartyID)) &&
+        (query.direction === "all" ||
+          (query.direction === "incoming" ? row.recipientID === caller : row.senderID === caller));
+      const { before } = query;
+      if (before === undefined) return traverse(table, query, matches);
+      const head = table.head();
+      const rows = table
+        .all()
+        .filter(
+          (row) =>
+            row.cursor <= head && (before === "latest" || row.cursor < before) && matches(row),
+        )
+        .slice(-query.limit);
+      return {
+        items: rows.map((row) => ({ ...row, history: table.history(row.messageID) })),
+        after: rows.at(-1)?.cursor ?? query.after,
+      };
     },
   };
 }
