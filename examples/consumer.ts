@@ -26,12 +26,13 @@ try {
   console.log(
     JSON.stringify({
       ticket: createWork(reader, store).get({ ticketID: ticket.ticketID }),
-      assigned: work.list({ ownerID: "owner", requesterID: "requester", status: "open" }),
+      assigned: work.list({ ownerWithin: "owner", requesterWithin: "requester", status: "open" }),
       awaiting: createForms(reader, store).list({
         requesterID: "requester",
         respondentID: "owner",
         status: "open",
         awaitingActorID: "owner",
+        awaitingWithin: "owner",
       }),
     }),
   );

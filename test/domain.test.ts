@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fixtureAuthority } from "../examples/authority.js";
+import { createActors } from "../src/actors/index.js";
 import { WorkspaceError } from "../src/contracts/index.js";
 import { createForms } from "../src/forms/index.js";
 import { bindWorkspace } from "../src/index.js";
@@ -14,7 +15,7 @@ const rejects = (code: WorkspaceError["code"]) => (error: unknown) =>
 function fixture(t: { after(callback: () => void): void }) {
   const dir = mkdtempSync(join(tmpdir(), "workspace-domain-"));
   const file = join(dir, "records.sqlite");
-  const { authority, rows } = fixtureAuthority();
+  const { authority, rows, managers } = fixtureAuthority();
   let store = openSqlite(file);
   t.after(() => {
     store.close();
@@ -22,6 +23,8 @@ function fixture(t: { after(callback: () => void): void }) {
   });
   return {
     rows,
+    managers,
+    authority,
     file,
     get store() {
       return store;
@@ -683,6 +686,278 @@ test("shared Work/Form AND filters precede pagination; awaiting means open, desi
   ]);
 });
 
+test("canonical membership includes deep and closed ancestry under the actual active caller", () => {
+  const f = fixtureAuthority();
+  const template = f.rows.get("respondent");
+  assert.ok(template);
+  let parent = "respondent";
+  for (let i = 0; i < 25; i++) {
+    const id = `closed-${i}`;
+    f.rows.set(id, { ...template, actorID: id, state: "closed" });
+    f.managers.set(id, parent);
+    parent = id;
+  }
+  for (const id of ["owner", "respondent"]) {
+    const row = f.rows.get(id);
+    assert.ok(row);
+    f.rows.set(id, { ...row, state: "closed" });
+  }
+  const principals: string[] = [];
+  const actors = createActors(
+    {
+      ...f.authority,
+      get(callerID, actorID) {
+        assert.equal(actorID, callerID, "membership must not resolve selected profiles");
+        return f.rows.get(actorID);
+      },
+      within(callerID, actorID, ancestorID) {
+        principals.push(callerID);
+        return f.authority.within(callerID, actorID, ancestorID);
+      },
+    },
+    "outsider",
+  );
+  assert.equal(actors.within(` ${parent} `, " owner "), true);
+  assert.equal(actors.within("owner", "owner"), true);
+  assert.equal(actors.within(parent, parent), true);
+  assert.equal(actors.within("outsider", "owner"), false);
+  assert.equal(actors.within("requester", "owner"), false);
+  for (const [member, anchor] of [
+    ["absent", "owner"],
+    ["owner", "absent"],
+    ["absent", "absent"],
+  ])
+    assert.equal(actors.within(member as string, anchor as string), false);
+  assert.ok(principals.every((id) => id === "outsider"));
+  assert.throws(() => actors.within("", "owner"), rejects("invalid_input"));
+  assert.throws(
+    () => createActors(f.authority, "owner").within(parent, "owner"),
+    rejects("forbidden"),
+  );
+});
+
+test("Work subtree filters intersect before sparse pages and retain closed deep histories after reassignment", (t) => {
+  const f = fixture(t);
+  const requester = f.as("owner");
+  const observer = f.as("outsider");
+  const expected = [];
+  for (let i = 0; i < 21; i++) {
+    const by = i % 3 === 0 ? observer : requester;
+    const row = by.work.create({
+      goal: `Interleaved ${i}`,
+      ownerID: i % 3 === 2 ? "outsider" : "respondent",
+    });
+    if (i % 3 === 1) expected.push(row);
+  }
+  const template = f.rows.get("respondent");
+  assert.ok(template);
+  let deep = "respondent";
+  for (let i = 0; i < 25; i++) {
+    const id = `deep-${i}`;
+    f.rows.set(id, { ...template, actorID: id });
+    f.managers.set(id, deep);
+    deep = id;
+  }
+  const ticket = requester.work.create({ goal: "Retained deep result", ownerID: deep });
+  const submitted = f.as(deep).work.submit({
+    ticketID: ticket.ticketID,
+    expectedRevision: 1,
+    result: "Evidence",
+    evidence: [],
+  });
+  assert.ok(submitted.submission);
+  const accepted = requester.work.review({
+    ticketID: ticket.ticketID,
+    expectedRevision: submitted.revision,
+    submissionID: submitted.submission.submissionID,
+    verdict: "accepted",
+    comment: "Reviewed",
+  });
+  const query = {
+    ownerID: "respondent",
+    requesterID: "owner",
+    ownerWithin: "owner",
+    requesterWithin: "owner",
+    status: "open" as const,
+    limit: 2,
+  };
+  let after = 0;
+  for (let i = 0; i < expected.length; i += 2) {
+    const page = observer.work.list({ ...query, after });
+    assert.deepEqual(page.items, expected.slice(i, i + 2));
+    assert.ok(page.after > after);
+    after = page.after;
+  }
+  assert.deepEqual(observer.work.list({ ...query, after }), { items: [], after });
+  assert.deepEqual(observer.work.list({ ...query, ownerWithin: "outsider" }).items, []);
+  assert.deepEqual(observer.work.list({ ...query, requesterWithin: "outsider" }).items, []);
+  assert.deepEqual(observer.work.list({ ownerWithin: "absent", after }), { items: [], after });
+  assert.equal(
+    observer.work.list({ ownerWithin: "owner", requesterWithin: "outsider" }).items.length,
+    7,
+  );
+  const first = expected[0];
+  assert.ok(first);
+  assert.throws(
+    () =>
+      observer.work.update({
+        ticketID: first.ticketID,
+        expectedRevision: 1,
+        goal: "No role grant",
+      }),
+    rejects("forbidden"),
+  );
+  const moved = requester.work.update({
+    ticketID: first.ticketID,
+    expectedRevision: 1,
+    ownerID: "outsider",
+  });
+  assert.deepEqual(observer.work.list({ ...query, after }), { items: [], after });
+  const privateMessage = requester.messages.send({
+    recipientID: "respondent",
+    text: "Private despite organization views",
+  });
+  assert.throws(
+    () => observer.messages.get({ messageID: privateMessage.messageID }),
+    rejects("not_found"),
+  );
+  for (const [id, row] of f.rows)
+    if (f.authority.within("outsider", id, "owner")) f.rows.set(id, { ...row, state: "closed" });
+  f.reopen();
+  assert.deepEqual(f.as("outsider").work.list({ ...query, limit: 100 }).items, expected.slice(1));
+  assert.deepEqual(
+    f
+      .as("outsider")
+      .work.list({ ownerWithin: "owner", requesterWithin: "owner", status: "accepted" }).items,
+    [accepted],
+  );
+  assert.deepEqual(f.as("outsider").work.get({ ticketID: first.ticketID }), moved);
+  assert.equal(moved.history.length, 2);
+  assert.equal(accepted.history.length, 3);
+});
+
+test("Form subtree existential predicates stay separate across sparse pages, answers, closure and reopen", (t) => {
+  const f = fixture(t);
+  const requester = f.as("owner");
+  const other = f.as("outsider");
+  const observer = f.as("requester");
+  const work = observer.work.create({ goal: "Optional context", ownerID: "owner" });
+  const fields = [{ name: "answer", label: "Optional", required: false }];
+  const first = requester.forms.create({
+    workID: work.ticketID,
+    respondentIDs: ["owner", "outsider"],
+    fields,
+  });
+  const answeredHere = requester.forms.respond({
+    formID: first.formID,
+    expectedRevision: 1,
+    answers: {},
+  });
+  const standalone = requester.forms.create({ respondentIDs: ["owner", "outsider"], fields });
+  assert.deepEqual(
+    observer.forms.list({ respondentWithin: "owner", awaitingWithin: "outsider" }).items,
+    [answeredHere, standalone],
+  );
+  assert.deepEqual(
+    observer.forms.list({ awaitingWithin: "owner", awaitingActorID: "outsider" }).items,
+    [standalone],
+  );
+  assert.deepEqual(
+    observer.forms.list({ respondentWithin: "outsider", awaitingWithin: "owner" }).items,
+    [standalone],
+  );
+  const closing = requester.forms.create({ respondentIDs: ["outsider"], fields });
+  const cancelled = requester.forms.close({
+    formID: closing.formID,
+    expectedRevision: 1,
+    status: "cancelled",
+    resolution: "No response required",
+  });
+  assert.deepEqual(
+    observer.forms.list({ respondentWithin: "outsider", status: "cancelled" }).items,
+    [cancelled],
+  );
+  assert.deepEqual(
+    observer.forms.list({ awaitingWithin: "outsider", status: "cancelled" }).items,
+    [],
+  );
+  const expected = [answeredHere];
+  for (let i = 0; i < 21; i++) {
+    const by = i % 3 === 0 ? other : requester;
+    const row = by.forms.create({
+      workID: work.ticketID,
+      respondentIDs: i % 3 === 2 ? ["owner"] : ["owner", "outsider"],
+      fields,
+    });
+    if (i % 3 === 1) expected.push(row);
+  }
+  const query = {
+    workID: work.ticketID,
+    requesterID: "owner",
+    requesterWithin: "owner",
+    respondentID: "owner",
+    respondentWithin: "owner",
+    awaitingActorID: "outsider",
+    awaitingWithin: "outsider",
+    status: "open" as const,
+    limit: 2,
+  };
+  let after = 0;
+  for (let i = 0; i < expected.length; i += 2) {
+    const page = observer.forms.list({ ...query, after });
+    assert.deepEqual(page.items, expected.slice(i, i + 2));
+    assert.ok(page.after > after);
+    after = page.after;
+  }
+  assert.deepEqual(observer.forms.list({ ...query, after }), { items: [], after });
+  for (const criterion of [
+    { requesterWithin: "outsider" },
+    { respondentWithin: "absent" },
+    { awaitingWithin: "absent" },
+  ])
+    assert.deepEqual(observer.forms.list({ ...query, ...criterion }).items, []);
+  assert.throws(
+    () => observer.forms.respond({ formID: standalone.formID, expectedRevision: 1, answers: {} }),
+    rejects("forbidden"),
+  );
+  assert.throws(
+    () =>
+      observer.forms.close({
+        formID: standalone.formID,
+        expectedRevision: 1,
+        status: "resolved",
+        resolution: "No role grant",
+      }),
+    rejects("forbidden"),
+  );
+  const next = expected[1];
+  assert.ok(next);
+  const answeredThere = other.forms.respond({
+    formID: next.formID,
+    expectedRevision: 1,
+    answers: {},
+  });
+  const resolved = requester.forms.close({
+    formID: first.formID,
+    expectedRevision: answeredHere.revision,
+    status: "resolved",
+    resolution: "Recorded",
+  });
+  assert.deepEqual(observer.forms.list({ ...query, after }), { items: [], after });
+  for (const [id, row] of f.rows)
+    if (id !== "requester") f.rows.set(id, { ...row, state: "closed" });
+  f.reopen();
+  assert.deepEqual(f.as("requester").forms.list({ ...query, limit: 100 }).items, expected.slice(2));
+  assert.deepEqual(f.as("requester").forms.get({ formID: next.formID }), answeredThere);
+  assert.equal(answeredThere.history.length, 2);
+  assert.equal(resolved.history.length, 3);
+  assert.equal(f.as("requester").work.get({ ticketID: work.ticketID }).revision, 1);
+  assert.throws(
+    () => f.as("outsider").forms.list({ awaitingWithin: "owner" }),
+    rejects("forbidden"),
+  );
+});
+
 test("self-review is an explicit requester call with actual reviewer identity", (t) => {
   const f = fixture(t);
   const client = f.as("requester");
@@ -753,6 +1028,7 @@ test("canonical visibility, active callers and retained reads after counterparty
         ),
         after: 1,
       }),
+      within: f.authority.within,
     },
     f.store,
     "requester",

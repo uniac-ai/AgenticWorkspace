@@ -126,6 +126,16 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
     respondentIDs: ["owner"],
     fields: [{ name: "answer", label: "Proceed?", required: true }],
   });
+  assert.equal(
+    (
+      await call<Page<Form>>(outsider, "form_list", {
+        requesterWithin: "requester",
+        respondentWithin: "owner",
+        awaitingWithin: "owner",
+      })
+    ).items[0]?.formID,
+    form.formID,
+  );
   await call(owner, "form_respond", {
     formID: form.formID,
     expectedRevision: 1,
@@ -135,6 +145,11 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   assert.equal(changed.responses.owner?.answer, "yes");
   assert.equal((await call<Page<Form>>(viewer, "form_list")).items.length, 1);
   assert.equal(Object.hasOwn(form, "workID"), false);
+  assert.deepEqual(
+    (await call<Page<Form>>(outsider, "form_list", { awaitingWithin: "outsider" })).items,
+    [],
+  );
+  await refused(outsider, "work_list", { ownerWithin: 42 }, "invalid_input");
   const formProperties = tools.find((tool) => tool.name === "form_create")?.inputSchema;
   assert.ok(formProperties);
   assert.equal(formProperties.required?.includes("workID"), false);
@@ -178,6 +193,8 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
       await call<Page<Work>>(outsider, "work_list", {
         ownerID: "owner",
         requesterID: "requester",
+        ownerWithin: "owner",
+        requesterWithin: "requester",
         status: "accepted",
         limit: 1,
       })
@@ -193,6 +210,8 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
       await call<Page<Form>>(outsider, "form_list", {
         requesterID: "requester",
         respondentID: "owner",
+        requesterWithin: "requester",
+        respondentWithin: "owner",
         status: "resolved",
       })
     ).items.length,
@@ -233,7 +252,17 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
 test("SDK boundary sanitizes unexpected failures and checks revoked caller", async (t) => {
   const store = openSqlite(":memory:");
   const fixture = fixtureAuthority();
-  const clients = bindWorkspace(fixture.authority, store, "requester");
+  const clients = bindWorkspace(
+    {
+      ...fixture.authority,
+      within: () => {
+        throw new Error("membership-credential-sentinel");
+      },
+    },
+    store,
+    "requester",
+  );
+  clients.work.create({ goal: "Membership failure fixture", ownerID: "owner" });
   const server = createMcpServer(
     {
       ...clients,
@@ -260,6 +289,13 @@ test("SDK boundary sanitizes unexpected failures and checks revoked caller", asy
   const errorText = (result.content as { type: string; text: string }[])[0]?.text;
   assert.ok(errorText);
   assert.equal(JSON.parse(errorText).code, "internal_error");
+  const selection = await client.callTool({
+    name: "work_list",
+    arguments: { ownerWithin: "owner" },
+  });
+  assert.equal(JSON.stringify(selection).includes("membership-credential-sentinel"), false);
+  assert.equal(selection.isError, true);
+  await refused(client, "work_list", { ownerWithin: "owner" }, "internal_error");
   const actor = fixture.rows.get("requester");
   assert.ok(actor);
   fixture.rows.set("requester", { ...actor, state: "closed" });

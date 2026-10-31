@@ -73,6 +73,7 @@ export function createForms(
     },
     list(input = {}) {
       const query = parse(FormContracts.form_list.input, input);
+      const { respondentWithin, awaitingWithin } = query;
       actors.get();
       return traverse(
         table,
@@ -81,11 +82,20 @@ export function createForms(
           (query.workID === undefined || row.workID === query.workID) &&
           (query.requesterID === undefined || row.requesterID === query.requesterID) &&
           (query.respondentID === undefined || row.respondentIDs.includes(query.respondentID)) &&
+          (query.requesterWithin === undefined ||
+            actors.within(row.requesterID, query.requesterWithin)) &&
+          (respondentWithin === undefined ||
+            row.respondentIDs.some((id) => actors.within(id, respondentWithin))) &&
           (query.status === undefined || row.status === query.status) &&
           (query.awaitingActorID === undefined ||
             (row.status === "open" &&
               row.respondentIDs.includes(query.awaitingActorID) &&
-              !Object.hasOwn(row.responses, query.awaitingActorID))),
+              !Object.hasOwn(row.responses, query.awaitingActorID))) &&
+          (awaitingWithin === undefined ||
+            (row.status === "open" &&
+              row.respondentIDs.some(
+                (id) => actors.within(id, awaitingWithin) && !Object.hasOwn(row.responses, id),
+              ))),
       );
     },
     respond(input) {

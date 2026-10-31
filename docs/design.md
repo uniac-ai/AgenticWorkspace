@@ -8,7 +8,7 @@ Arrows point toward a dependency; dashed edges are optional. Forms and Work trac
 
 ```mermaid
 flowchart BT
-    A["Actors<br/>Identity and discovery"]
+    A["Actors<br/>Identity, discovery and canonical membership"]
     M["Messages<br/>Persistent direct messaging"]
     T["Work tracking<br/>Ticket, owner, progress, result and review"]
     F["Forms and questions<br/>Fields, respondents, responses and resolution"]
@@ -34,7 +34,7 @@ Both MCP exposures use the same Actor identity and role rules. The execution ser
 
 | Module        | Consumes                                          | Exposes                                            | Owns                                                                             |
 | ------------- | ------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Actors        | Injected canonical authority and admitted caller  | `ActorsClient.get/list`                            | No persisted state; no lifecycle administration                                  |
+| Actors        | Injected canonical authority and admitted caller  | `ActorsClient.get/list/within`                     | No persisted state; no lifecycle administration                                  |
 | Messages      | Actors; optional WorkReader; Messages persistence | `MessagesClient.send/get/list`                     | Content, parties, optional work context, send history                            |
 | Work tracking | Actors; Work persistence                          | `WorkClient` and its read-only `WorkReader` subset | Tickets, requester, owner, goal, progress/status, submission, review, history    |
 | Forms         | Actors; optional WorkReader; Forms persistence    | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution |
@@ -42,6 +42,8 @@ Both MCP exposures use the same Actor identity and role rules. The execution ser
 Work does not import Messages or Forms. A Work ticket needs neither. Direct messages and Forms need no work ticket or Work client; a reply is another flat direct message. Optional references validate existing shared Work on creation and have no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Work and Forms, including history, are public within the admitted organization; Messages remains private to sender/recipient. Form reads require no Work lookup. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
 
 The host binds one organization's canonical authority and persistence into the composition. Shared reads authenticate the existing caller; they do not construct a privileged Actor. Work owner/requester/status and Form work/requester/respondent/status/awaiting filters intersect before pagination, using the same traversal and record schemas. Business write roles remain separate from shared visibility.
+
+The required synchronous canonical `within(callerID, actorID, ancestorID)` relationship read supplies inclusive retained ancestry, including closed positions and descendants beyond any Team depth limit. The bound Actor client revalidates its active caller; Work/Form predicates apply the five subtree criteria before traversal limits. Workspace stores no hierarchy or new Actor field and adds no MCP Tool. The model-free fixture alone holds a manager map for its example truth. Requester scope is immutable record origin, not causal ticket lineage. Independent lane cursors and bounded from-zero refresh/reconciliation preserve the current-upsert limitations described in the contract.
 
 The root composition factory wires distinct clients; it is not another multi-domain operation client. Consumers can construct and use any module independently through its own export. Contracts depend only on Zod. Domain modules import persistence types; native SQLite is loaded only through the persistence implementation export.
 

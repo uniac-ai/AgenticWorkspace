@@ -41,6 +41,12 @@ export function fixtureAuthority() {
       },
     ],
   ]);
+  const managers = new Map<string, string | null>([
+    ["requester", null],
+    ["owner", "requester"],
+    ["respondent", "owner"],
+    ["outsider", "requester"],
+  ]);
   const authority: ActorAuthority = {
     get: (_caller, id) => rows.get(id),
     list: (_caller, query) => {
@@ -53,6 +59,16 @@ export function fixtureAuthority() {
       const items = all.slice(query.after, query.after + query.limit);
       return { items, after: query.after + items.length };
     },
+    within: (_caller, actorID, ancestorID) => {
+      if (!rows.has(ancestorID)) return false;
+      for (
+        let at: string | null | undefined = actorID;
+        at != null && rows.has(at);
+        at = managers.get(at)
+      )
+        if (at === ancestorID) return true;
+      return false;
+    },
   };
-  return { authority, rows };
+  return { authority, rows, managers };
 }
