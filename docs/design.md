@@ -30,7 +30,7 @@ flowchart TB
     H["AgentOrg Hub<br/>Canonical Actor identity, admission<br/>and Tool exposure"] -.->|"authority binding when integrated"| D
 ```
 
-Exposure purpose is independent of Actor kind. The execution server exposes all 18 operations. The viewer server exposes eight reads and refuses writes, using the same underlying clients and authority checks. The SDK owns protocol initialization, transports, request dispatch, and shutdown. The package constructs an SDK server; the host connects it to an SDK transport and closes it.
+Both MCP exposures use the same Actor identity and role rules. The execution server exposes all 18 operations. The viewer server exposes eight reads and refuses writes, using the same underlying clients and authority checks. The SDK owns protocol initialization, transports, request dispatch, and shutdown. The package constructs an SDK server; the host connects it to an SDK transport and closes it.
 
 ## Module contracts
 

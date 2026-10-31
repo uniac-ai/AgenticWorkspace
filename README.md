@@ -1,6 +1,6 @@
 # Agentic Workspace
 
-Durable direct messages, work tickets, and work-linked forms for interchangeable human and software Actor clients. Four separate clients expose identity/discovery, Messages, Work tracking, and Forms. Execution and viewer MCP servers share their records and authority rules.
+Durable direct messages, work tickets, and work-linked forms for admitted Actor clients. Four separate clients expose identity/discovery, Messages, Work tracking, and Forms. Execution and viewer MCP servers share their records and authority rules.
 
 This private package is a standalone fixture implementation. The human selected eventual installation inside AgentOrg Hub. Production admission, canonical Actor binding, existing messaging/questions overlap, and Hub composition still require the [adapter checkpoint](docs/hub-integration.md). The runnable example uses model-free fixture identities; it is not production admission.
 
@@ -62,4 +62,4 @@ function workspace(authority: ActorAuthority, admittedActorID: string, databaseP
 
 `ActorAuthority.get(callerID, actorID)` and `.list(callerID, query)` own directory visibility and current canonical state. The workspace stores no Actor rows or credentials. The optional root `bindWorkspace` factory performs the same explicit composition and returns four distinct clients. Contracts and errors are exported at `/contracts`; SDK server construction is exported at `/mcp`.
 
-See [design and accepted graphs](docs/design.md), [contracts and transitions](docs/contracts.md), and [the explicit composition example](examples/consumer.ts). Tests cover all four requester/owner human/software combinations, database reopen, history/cursors, authorization, revisions, exact-submission review, SDK calls, stdio process restart, and an external TypeScript consumer importing only package exports.
+See [design and accepted graphs](docs/design.md), [contracts and transitions](docs/contracts.md), and [the explicit composition example](examples/consumer.ts). Tests cover requester/owner role swaps, database reopen, history/cursors, authorization, revisions, exact-submission review, SDK calls, stdio process restart, and an external TypeScript consumer importing only package exports.

@@ -31,11 +31,19 @@ import { createActors, type ActorAuthority } from '@uniac/agentic-workspace/acto
 import { createWork } from '@uniac/agentic-workspace/work';
 import { createMessages } from '@uniac/agentic-workspace/messages';
 import { createForms } from '@uniac/agentic-workspace/forms';
-import { Work, type Actor } from '@uniac/agentic-workspace/contracts';
+import { Work, Actor, ActorContracts, WorkspaceError } from '@uniac/agentic-workspace/contracts';
 import { openSqlite } from '@uniac/agentic-workspace/persistence';
 import { createMcpServer } from '@uniac/agentic-workspace/mcp';
 const actor: Actor = {actorID:'self',name:'Consumer',purpose:'Public exports proof',state:'active'};
+// @ts-expect-error Actor records have no intrinsic client classification.
+const classifiedActor: Actor = {...actor,kind:'human'};
+if (Actor.safeParse(classifiedActor).success) throw new Error('Actor schema accepted kind');
+if (ActorContracts.actor_get.input.safeParse({kind:'human'}).success) throw new Error('Actor lookup accepted kind');
 const authority: ActorAuthority = {get: (_caller,id) => id==='self'?actor:undefined,list: () => ({items:[actor],after:1})};
+try {
+  createActors({...authority,get:()=>classifiedActor},'self').get();
+  throw new Error('Actor client accepted kind');
+} catch(error) {if (!(error instanceof WorkspaceError) || error.code!=='invalid_input') throw error;}
 const store = openSqlite(':memory:');
 try {
   const actors = createActors(authority,'self');

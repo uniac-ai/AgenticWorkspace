@@ -6,7 +6,6 @@ export const Actor = z.strictObject({
   name: Text,
   purpose: Text,
   state: z.enum(["active", "closed"]),
-  kind: z.enum(["human", "software"]).optional(),
 });
 export type Actor = z.infer<typeof Actor>;
 export const ActorContracts = {

@@ -10,13 +10,10 @@ import { openSqlite } from "../src/persistence/index.js";
 
 const rejects = (code: WorkspaceError["code"]) => (error: unknown) =>
   error instanceof WorkspaceError && error.code === code;
-function fixture(
-  t: { after(callback: () => void): void },
-  kinds?: ["human" | "software", "human" | "software"],
-) {
+function fixture(t: { after(callback: () => void): void }) {
   const dir = mkdtempSync(join(tmpdir(), "workspace-domain-"));
   const file = join(dir, "records.sqlite");
-  const { authority, rows } = fixtureAuthority(...(kinds ?? ["human", "software"]));
+  const { authority, rows } = fixtureAuthority();
   let store = openSqlite(file);
   t.after(() => {
     store.close();
@@ -41,10 +38,10 @@ function fixture(
   };
 }
 
-for (const requesterKind of ["human", "software"] as const)
-  for (const ownerKind of ["human", "software"] as const) {
-    test(`identical role rules and independent transitions: ${requesterKind}/${ownerKind}`, (t) => {
-      const f = fixture(t, [requesterKind, ownerKind]);
+for (const requesterClient of ["human", "software"] as const)
+  for (const ownerClient of ["human", "software"] as const) {
+    test(`identical role rules and independent transitions: ${requesterClient}/${ownerClient}`, (t) => {
+      const f = fixture(t);
       const requester = f.as("requester");
       const owner = f.as("owner");
       const respondent = f.as("respondent");

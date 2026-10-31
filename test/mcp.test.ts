@@ -64,7 +64,7 @@ async function refused(client: Client, name: string, args: Record<string, unknow
 
 test("SDK execution/viewer discovery and all 18 calls share records and enforce domain authority", async (t) => {
   const store = openSqlite(":memory:");
-  const { authority } = fixtureAuthority("software", "human");
+  const { authority } = fixtureAuthority();
   const connections: { client: Client; server: ReturnType<typeof createMcpServer> }[] = [];
   t.after(async () => {
     for (const { client, server } of connections) {
@@ -86,15 +86,18 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
   const owner = await connect("owner", "execution");
   const viewer = await connect("requester", "viewer");
   const outsider = await connect("outsider", "execution");
-  assert.deepEqual(
-    (await requester.listTools()).tools.map((tool) => tool.name).sort(),
-    [...executionNames].sort(),
-  );
+  const tools = (await requester.listTools()).tools;
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), [...executionNames].sort());
+  const actorProperties = tools.find((tool) => tool.name === "actor_get")?.outputSchema?.properties;
+  assert.ok(actorProperties && typeof actorProperties === "object");
+  assert.equal(Object.hasOwn(actorProperties, "kind"), false);
   const viewedTools = (await viewer.listTools()).tools;
   assert.deepEqual(viewedTools.map((tool) => tool.name).sort(), [...viewerNames].sort());
   assert.ok(viewedTools.every((tool) => tool.annotations?.readOnlyHint === true));
   assert.equal((await call<Actor>(requester, "actor_get")).actorID, "requester");
-  assert.equal((await call<Actor>(viewer, "actor_get", { actorID: "owner" })).kind, "human");
+  const namedActor = await call<Actor>(viewer, "actor_get", { actorID: "owner" });
+  assert.equal(namedActor.actorID, "owner");
+  assert.equal(Object.hasOwn(namedActor, "kind"), false);
   assert.equal((await call<Page<Actor>>(requester, "actor_list", { limit: 1 })).items.length, 1);
   const ticket = await call<Work>(requester, "work_create", {
     goal: "Protocol-delivered work",
@@ -191,6 +194,7 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
     "invalid_input",
   );
   await refused(owner, "actor_create", { name: "Excluded" }, "not_found");
+  await refused(requester, "actor_get", { kind: "human" }, "invalid_input");
 });
 
 test("SDK boundary sanitizes unexpected failures and checks revoked caller", async (t) => {

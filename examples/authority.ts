@@ -2,10 +2,7 @@
 import type { ActorAuthority } from "../src/actors/index.js";
 import { type Actor, requireThat } from "../src/contracts/index.js";
 
-export function fixtureAuthority(
-  requesterKind: "human" | "software" = "human",
-  ownerKind: "human" | "software" = "software",
-) {
+export function fixtureAuthority() {
   const rows = new Map<string, Actor>([
     [
       "requester",
@@ -14,7 +11,6 @@ export function fixtureAuthority(
         name: "Requester",
         purpose: "Request and review fixture work",
         state: "active",
-        kind: requesterKind,
       },
     ],
     [
@@ -24,7 +20,6 @@ export function fixtureAuthority(
         name: "Owner",
         purpose: "Execute fixture work",
         state: "active",
-        kind: ownerKind,
       },
     ],
     [
@@ -34,7 +29,6 @@ export function fixtureAuthority(
         name: "Respondent",
         purpose: "Answer fixture forms",
         state: "active",
-        kind: "human",
       },
     ],
     [
@@ -44,7 +38,6 @@ export function fixtureAuthority(
         name: "Outsider",
         purpose: "Test authority boundaries",
         state: "active",
-        kind: "software",
       },
     ],
   ]);
