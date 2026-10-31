@@ -1,6 +1,11 @@
 /** Execution and viewer MCP servers over the same four domain clients. SDK owns transport. */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListToolsRequestSchema,
+  McpError,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   ActorContracts,
@@ -14,6 +19,11 @@ import {
 import type { WorkspaceClients } from "../index.js";
 
 export type McpPurpose = "execution" | "viewer";
+function publicFailure(error: unknown) {
+  return error instanceof WorkspaceError
+    ? { code: error.code, message: error.message }
+    : { code: "internal_error", message: "workspace operation failed" };
+}
 function bind<S extends z.ZodType>(
   spec: { description: string; input: S; output: z.ZodType; writes: boolean },
   run: (input: z.output<S>) => unknown,
@@ -49,21 +59,28 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    actors.get();
-    return {
-      tools: Object.entries(operations)
-        .filter(([, op]) => purpose === "execution" || !op.writes)
-        .map(([name, op]) => ({
-          name,
-          description: op.description,
-          inputSchema: z.toJSONSchema(op.input, { io: "input" }) as {
-            type: "object";
-            [key: string]: unknown;
-          },
-          outputSchema: z.toJSONSchema(op.output) as { type: "object"; [key: string]: unknown },
-          annotations: { readOnlyHint: !op.writes, openWorldHint: false },
-        })),
-    };
+    try {
+      actors.get();
+      return {
+        tools: Object.entries(operations)
+          .filter(([, op]) => purpose === "execution" || !op.writes)
+          .map(([name, op]) => ({
+            name,
+            description: op.description,
+            inputSchema: z.toJSONSchema(op.input, { io: "input" }) as {
+              type: "object";
+              [key: string]: unknown;
+            },
+            outputSchema: z.toJSONSchema(op.output) as { type: "object"; [key: string]: unknown },
+            annotations: { readOnlyHint: !op.writes, openWorldHint: false },
+          })),
+      };
+    } catch (error) {
+      throw new McpError(
+        error instanceof WorkspaceError ? ErrorCode.InvalidRequest : ErrorCode.InternalError,
+        publicFailure(error).message,
+      );
+    }
   });
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     try {
@@ -78,13 +95,9 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
       const value = operation.run(params.arguments ?? {}) as Record<string, unknown>;
       return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
     } catch (error) {
-      const refusal =
-        error instanceof WorkspaceError
-          ? { code: error.code, message: error.message }
-          : { code: "internal_error", message: "workspace operation failed" };
       return {
         isError: true,
-        content: [{ type: "text", text: JSON.stringify(refusal) }],
+        content: [{ type: "text", text: JSON.stringify(publicFailure(error)) }],
       };
     }
   });

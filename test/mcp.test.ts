@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { fixtureAuthority } from "../examples/authority.js";
 import type { Actor, Form, Message, Page, Work } from "../src/contracts/index.js";
 import { bindWorkspace } from "../src/index.js";
@@ -227,6 +228,67 @@ test("SDK boundary sanitizes unexpected failures and checks revoked caller", asy
   fixture.rows.set("requester", { ...actor, state: "closed" });
   await refused(client, "message_list", {}, "forbidden");
 });
+
+for (const purpose of ["execution", "viewer"] as const) {
+  test(`SDK discovery sanitizes authority failures and preserves caller denial: ${purpose}`, async (t) => {
+    const store = openSqlite(":memory:");
+    const fixture = fixtureAuthority();
+    const sentinel = "canonical-authority-credential-sentinel";
+    let failing = false;
+    const authority = {
+      ...fixture.authority,
+      get(callerID: string, actorID: string) {
+        if (failing) throw new Error(sentinel);
+        return fixture.authority.get(callerID, actorID);
+      },
+    };
+    const server = createMcpServer(bindWorkspace(authority, store, "requester"), purpose);
+    const client = new Client({ name: "discovery-error-consumer", version: "1" });
+    t.after(async () => {
+      await client.close();
+      await server.close();
+      store.close();
+    });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a);
+    await client.connect(b);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 8);
+    failing = true;
+    await assert.rejects(
+      () => client.listTools(),
+      (error: unknown) => {
+        assert.ok(error instanceof McpError);
+        assert.equal(error.code, ErrorCode.InternalError);
+        assert.equal(
+          JSON.stringify({ code: error.code, message: error.message, data: error.data }).includes(
+            sentinel,
+          ),
+          false,
+        );
+        assert.match(error.message, /workspace operation failed/);
+        return true;
+      },
+    );
+    const callError = await client.callTool({ name: "actor_get", arguments: {} });
+    assert.equal(callError.isError, true);
+    assert.equal(JSON.stringify(callError).includes(sentinel), false);
+    failing = false;
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 8);
+    const actor = fixture.rows.get("requester");
+    assert.ok(actor);
+    fixture.rows.set("requester", { ...actor, state: "closed" });
+    await assert.rejects(
+      () => client.listTools(),
+      (error: unknown) => {
+        assert.ok(error instanceof McpError);
+        assert.equal(error.code, ErrorCode.InvalidRequest);
+        assert.match(error.message, /active admitted Actor is required/);
+        return true;
+      },
+    );
+    await refused(client, "actor_get", {}, "forbidden");
+  });
+}
 
 test("npm start target serves SDK stdio across independent processes and durable reopen", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "workspace-stdio-"));
