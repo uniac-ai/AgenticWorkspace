@@ -1,4 +1,4 @@
-/** Flat direct correspondence, read acknowledgements and handling outcomes. */
+/** Flat direct correspondence between sender and recipient. */
 import { randomUUID } from "node:crypto";
 import { type ActorsClient, activeActor } from "../actors/index.js";
 import {
@@ -18,8 +18,6 @@ export interface MessagesClient {
   send(input: Input<typeof MessageContracts.message_send.input>): Message;
   get(input: Input<typeof MessageContracts.message_get.input>): Message;
   list(input?: Input<typeof MessageContracts.message_list.input>): Page<Message>;
-  acknowledge(input: Input<typeof MessageContracts.message_acknowledge.input>): Message;
-  handle(input: Input<typeof MessageContracts.message_handle.input>): Message;
 }
 export function createMessages(
   actors: ActorsClient,
@@ -34,10 +32,6 @@ export function createMessages(
     requireThat(visible(row, caller), "not_found", "record not found");
     return row;
   }
-  const state = (row: Message): MessageState => {
-    const { revision: _revision, cursor: _cursor, history: _history, ...data } = row;
-    return data;
-  };
   return {
     send(input) {
       const request = parse(MessageContracts.message_send.input, input);
@@ -74,42 +68,6 @@ export function createMessages(
               ? row.recipientID === caller
               : row.senderID === caller)),
       );
-    },
-    acknowledge(input) {
-      const request = parse(MessageContracts.message_acknowledge.input, input);
-      const caller = actors.get().actorID;
-      return store.transaction(() => {
-        const row = get(request.messageID, caller);
-        requireThat(
-          row.recipientID === caller,
-          "forbidden",
-          "only recipient acknowledges a message",
-        );
-        if (row.acknowledgedAt !== undefined) return row;
-        const at = now();
-        return table.save(
-          row.messageID,
-          { ...state(row), acknowledgedAt: at },
-          { actorID: caller, at, action: "acknowledged", detail: {} },
-          row.revision,
-        );
-      });
-    },
-    handle(input) {
-      const request = parse(MessageContracts.message_handle.input, input);
-      const caller = actors.get().actorID;
-      return store.transaction(() => {
-        const row = get(request.messageID, caller);
-        requireThat(row.recipientID === caller, "forbidden", "only recipient handles a message");
-        const at = now();
-        const handling = { outcome: request.outcome, at };
-        return table.save(
-          row.messageID,
-          { ...state(row), handling },
-          { actorID: caller, at, action: "handled", detail: handling },
-          row.revision,
-        );
-      });
     },
   };
 }

@@ -38,10 +38,6 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
     message_send: bind(MessageContracts.message_send, (input) => messages.send(input)),
     message_get: bind(MessageContracts.message_get, (input) => messages.get(input)),
     message_list: bind(MessageContracts.message_list, (input) => messages.list(input)),
-    message_acknowledge: bind(MessageContracts.message_acknowledge, (input) =>
-      messages.acknowledge(input),
-    ),
-    message_handle: bind(MessageContracts.message_handle, (input) => messages.handle(input)),
     work_create: bind(WorkContracts.work_create, (input) => work.create(input)),
     work_get: bind(WorkContracts.work_get, (input) => work.get(input)),
     work_list: bind(WorkContracts.work_list, (input) => work.list(input)),

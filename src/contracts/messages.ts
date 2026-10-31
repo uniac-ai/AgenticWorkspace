@@ -8,8 +8,6 @@ export const MessageState = z.strictObject({
   text: Text,
   workID: ID.optional(),
   createdAt: z.iso.datetime(),
-  acknowledgedAt: z.iso.datetime().optional(),
-  handling: z.strictObject({ outcome: Text, at: z.iso.datetime() }).optional(),
 });
 export const Message = MessageState.extend(Metadata);
 export type Message = z.infer<typeof Message>;
@@ -22,26 +20,10 @@ export const MessageContracts = {
     Message,
     true,
   ),
-  message_get: contract(
-    "Read a message as one of its parties; reading has no acknowledgement effect.",
-    messageID,
-    Message,
-  ),
+  message_get: contract("Read a message as one of its parties.", messageID, Message),
   message_list: contract(
     "Traverse current visible incoming/outgoing message upserts.",
     ListInput.extend({ direction: z.enum(["incoming", "outgoing", "all"]).default("all") }),
     pageOf(Message),
-  ),
-  message_acknowledge: contract(
-    "Record the recipient's read acknowledgement independently of handling.",
-    messageID,
-    Message,
-    true,
-  ),
-  message_handle: contract(
-    "Record a recipient handling outcome independently of read acknowledgement.",
-    messageID.extend({ outcome: Text }),
-    Message,
-    true,
   ),
 };

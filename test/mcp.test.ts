@@ -19,8 +19,6 @@ const executionNames = [
   "message_send",
   "message_get",
   "message_list",
-  "message_acknowledge",
-  "message_handle",
   "work_create",
   "work_get",
   "work_list",
@@ -62,7 +60,7 @@ async function refused(client: Client, name: string, args: Record<string, unknow
   assert.equal(JSON.parse(errorText).code, code);
 }
 
-test("SDK execution/viewer discovery and all 18 calls share records and enforce domain authority", async (t) => {
+test("SDK execution/viewer discovery and all 16 calls share records and enforce domain authority", async (t) => {
   const store = openSqlite(":memory:");
   const { authority } = fixtureAuthority();
   const connections: { client: Client; server: ReturnType<typeof createMcpServer> }[] = [];
@@ -114,20 +112,16 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
     workID: ticket.ticketID,
   });
   assert.equal(
-    (await call<Message>(viewer, "message_get", { messageID: message.messageID })).acknowledgedAt,
-    undefined,
+    (await call<Message>(viewer, "message_get", { messageID: message.messageID })).text,
+    "Protocol message",
   );
   assert.equal(
     (await call<Page<Message>>(viewer, "message_list", { direction: "outgoing" })).items.length,
     1,
   );
-  await call(owner, "message_handle", {
-    messageID: message.messageID,
-    outcome: "Recorded separately",
-  });
-  const ack = await call<Message>(owner, "message_acknowledge", { messageID: message.messageID });
-  assert.ok(ack.acknowledgedAt);
-  assert.ok(ack.handling);
+  for (const removed of ["message_acknowledge", "message_handle"])
+    for (const client of [owner, viewer])
+      await refused(client, removed, { messageID: message.messageID }, "not_found");
   const form = await call<Form>(requester, "form_create", {
     workID: ticket.ticketID,
     respondentIDs: ["owner"],
@@ -256,7 +250,7 @@ for (const purpose of ["execution", "viewer"] as const) {
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(a);
     await client.connect(b);
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 8);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 16 : 8);
     failing = true;
     await assert.rejects(
       () => client.listTools(),
@@ -277,7 +271,7 @@ for (const purpose of ["execution", "viewer"] as const) {
     assert.equal(callError.isError, true);
     assert.equal(JSON.stringify(callError).includes(sentinel), false);
     failing = false;
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 8);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 16 : 8);
     const actor = fixture.rows.get("requester");
     assert.ok(actor);
     fixture.rows.set("requester", { ...actor, state: "closed" });

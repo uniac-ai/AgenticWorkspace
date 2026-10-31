@@ -20,16 +20,13 @@ Links: [composition](https://github.com/uniac-ai/AgentOrg/blob/cca137062a9c2d979
 
 The replacement exposes Tools explicitly and has no configurable package-extension slot today. Installed-package integration therefore requires a small separately reviewed Hub composition change. Actor advertisement/reverse invocation is not an extension path. Public Actor callers consume Hub operations; they do not register feature modules.
 
-## Overlap and migration decisions still open
+## Correspondence cutover and remaining decisions
 
 Legacy Hub Messages exposes `message_send`, `messages`, and `message_read`. Workspace Messages also exposes `message_send`; simply appending both features would create duplicate invocation aliases. The replacement dispatch chooses the first matching interface alias. This must be resolved explicitly before wiring. Old Hub `question_ask/question_answer/questions` has no required Work ID, while every workspace Form requires one. Hub team views also consume existing correspondence; their read dependency must be mapped if that owner changes.
 
-The smallest choices for parent/human settlement are:
+The planned cutover selects Workspace as the single correspondence owner. Replace legacy message/question writes and their aliases in one coordinated consumer change. Messages exposes only `message_send/get/list`, without public read/handling state or dependent actions. Retire `message_read`, `unread` filtering and `read_at` output; retained public summaries must not reintroduce those facts. The inspected team response has progress/questions/claims and identity/presence, with no message/read counts. Preserve original private records/evidence; old receipt facts do not become new public Message fields. ID/party/provenance retention and client-local cursor/dedup design remain explicit later decisions. List position does not acknowledge delivery.
 
-1. **Make workspace the selected correspondence owner during a coordinated client cutover.** Remove legacy message/question writes from explicit exposure and update consumers to the settled workspace operations. Migrate direct messages only through an agreed ID/party/read-ack mapping; never infer handled outcomes. Retain old questions until the owner supplies an existing Work association or chooses their archive treatment. This keeps one correspondence authority, but requires a consumer and retention plan.
-2. **Keep legacy correspondence authoritative for the initial Hub integration and expose only nonoverlapping workspace modules there.** Standalone workspace Messages remains testable here but unexposed in Hub until cutover is settled. Work/Forms can be evaluated without introducing a duplicate message front door. This is a partial integration, not completion of all 18 Hub-exposed operations.
-
-Recommendation: settle the complete single-owner cutover before enabling all workspace Tools. Do not silently migrate old records, fabricate Work tickets for old questions, preserve excluded remote-call compatibility, or add a second message-writing alias as an incidental adapter detail. No overlap/migration choice is implemented or approved by this checkpoint.
+Retain old questions until the owner supplies a legitimate existing Work association or chooses their archival treatment. Native approval/input requests without Work have no Form mapping yet. Do not fabricate Work tickets or add a fallback question writer. These retention and consumer gaps must be resolved before enabling the proposed Hub wiring; no migration or wiring is implemented here.
 
 ## Runtime and verification boundary
 

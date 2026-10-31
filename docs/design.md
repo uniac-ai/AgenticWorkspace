@@ -30,18 +30,18 @@ flowchart TB
     H["AgentOrg Hub<br/>Canonical Actor identity, admission<br/>and Tool exposure"] -.->|"authority binding when integrated"| D
 ```
 
-Both MCP exposures use the same Actor identity and role rules. The execution server exposes all 18 operations. The viewer server exposes eight reads and refuses writes, using the same underlying clients and authority checks. The SDK owns protocol initialization, transports, request dispatch, and shutdown. The package constructs an SDK server; the host connects it to an SDK transport and closes it.
+Both MCP exposures use the same Actor identity and role rules. The execution server exposes all 16 operations. The viewer server exposes eight reads and refuses writes, using the same underlying clients and authority checks. The SDK owns protocol initialization, transports, request dispatch, and shutdown. The package constructs an SDK server; the host connects it to an SDK transport and closes it.
 
 ## Module contracts
 
 | Module        | Consumes                                          | Exposes                                            | Owns                                                                             |
 | ------------- | ------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------- |
 | Actors        | Injected canonical authority and admitted caller  | `ActorsClient.get/list`                            | No persisted state; no lifecycle administration                                  |
-| Messages      | Actors; optional WorkReader; Messages persistence | `MessagesClient`                                   | Content, parties, optional work reference, acknowledgement, handling, history    |
+| Messages      | Actors; optional WorkReader; Messages persistence | `MessagesClient.send/get/list`                     | Content, parties, optional work context, send history                            |
 | Work tracking | Actors; Work persistence                          | `WorkClient` and its read-only `WorkReader` subset | Tickets, requester, owner, goal, progress/status, submission, review, history    |
 | Forms         | Actors; required WorkReader; Forms persistence    | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution |
 
-Work does not import Messages or Forms. A Work ticket needs neither. Direct messages need no work ticket; optional references must identify existing readable work. Forms require an existing readable work ticket. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
+Work does not import Messages or Forms. A Work ticket needs neither. Direct messages need no work ticket; a reply is another flat direct message. Optional references must identify existing readable work and have no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Forms require an existing readable work ticket. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
 
 The root composition factory wires distinct clients; it is not another multi-domain operation client. Consumers can construct and use any module independently through its own export. Contracts depend only on Zod. Domain modules import persistence types; native SQLite is loaded only through the persistence implementation export.
 

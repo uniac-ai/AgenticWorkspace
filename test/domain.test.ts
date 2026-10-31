@@ -55,25 +55,10 @@ for (const requesterClient of ["human", "software"] as const)
         text: "Inspect this work",
         workID: ticket.ticketID,
       });
-      assert.equal(owner.messages.get({ messageID: message.messageID }).acknowledgedAt, undefined);
-      assert.throws(
-        () => requester.messages.acknowledge({ messageID: message.messageID }),
-        rejects("forbidden"),
-      );
+      assert.deepEqual(owner.messages.get({ messageID: message.messageID }), message);
       assert.throws(
         () => outsider.messages.get({ messageID: message.messageID }),
         rejects("not_found"),
-      );
-      const handled = owner.messages.handle({
-        messageID: message.messageID,
-        outcome: "I recorded the request",
-      });
-      assert.equal(handled.acknowledgedAt, undefined);
-      const acknowledged = owner.messages.acknowledge({ messageID: message.messageID });
-      assert.ok(acknowledged.acknowledgedAt);
-      assert.equal(
-        owner.messages.acknowledge({ messageID: message.messageID }).revision,
-        acknowledged.revision,
       );
       assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
       const form = requester.forms.create({
@@ -266,7 +251,7 @@ for (const requesterClient of ["human", "software"] as const)
       assert.deepEqual(retained, accepted);
       assert.equal(retained.history.filter((e) => e.action === "submitted").length, 2);
       assert.equal(retained.history.filter((e) => e.action === "reviewed").length, 2);
-      assert.deepEqual(f.as("owner").messages.get({ messageID: message.messageID }), acknowledged);
+      assert.deepEqual(f.as("owner").messages.get({ messageID: message.messageID }), message);
       assert.deepEqual(f.as("respondent").forms.get({ formID: form.formID }), closed);
       assert.equal(
         f.as("requester").work.list({ status: "accepted" }).items[0]?.ticketID,
@@ -437,18 +422,16 @@ test("multi-page scoped upserts, duplicate updated rows and disappearing scope s
     recipientID: "requester",
     text: "Outgoing before incoming filter",
   });
-  const msgs = ["one", "two", "three"].map((text) =>
-    f.as("requester").messages.send({ recipientID: "owner", text }),
-  );
+  for (const text of ["one", "two", "three"])
+    f.as("requester").messages.send({ recipientID: "owner", text });
   const inbox1 = f.as("owner").messages.list({ direction: "incoming", limit: 1 });
-  f.as("owner").messages.acknowledge({ messageID: msgs[0]?.messageID ?? "" });
   f.reopen();
   const inbox2 = f
     .as("owner")
     .messages.list({ direction: "incoming", after: inbox1.after, limit: 3 });
   assert.deepEqual(
     inbox2.items.map((row) => row.text),
-    ["two", "three", "one"],
+    ["two", "three"],
   );
   assert.throws(() => f.as("owner").messages.list({ after: 999 }), rejects("invalid_input"));
   f.as("outsider").forms.create({
