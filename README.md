@@ -1,6 +1,6 @@
 # Agentic Workspace
 
-Durable direct messages, work tickets, and forms for admitted Actor clients. Four separate clients expose identity/discovery, Messages, Work tracking, and Forms. Execution and viewer MCP servers share their records and authority rules.
+Durable private P2P messages and organization-shared work tickets and forms for active admitted Actor clients. Four separate clients expose identity/discovery, Messages, Work tracking, and Forms. Execution and viewer MCP servers share their records and authority rules. Work/Form list filters select matching records before pagination; business write roles remain unchanged.
 
 This private package is a standalone fixture implementation. The human selected eventual installation inside AgentOrg Hub. Production admission, canonical Actor binding, existing messaging/questions overlap, and Hub composition still require the [adapter checkpoint](docs/hub-integration.md). The runnable example uses model-free fixture identities; it is not production admission.
 

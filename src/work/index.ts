@@ -28,13 +28,6 @@ export function createWork(
   store: Pick<WorkspaceStore, "work" | "transaction">,
 ): WorkClient {
   const table = store.work;
-  const visible = (row: WorkState, caller: string) =>
-    row.requesterID === caller || row.ownerID === caller;
-  function get(ticketID: string, caller: string): Work {
-    const row = recorded(table, ticketID);
-    requireThat(visible(row, caller), "not_found", "record not found");
-    return row;
-  }
   const editable = (row: WorkState) =>
     requireThat(
       row.status !== "submitted" && row.status !== "accepted",
@@ -69,16 +62,19 @@ export function createWork(
     },
     get(input) {
       const request = parse(WorkContracts.work_get.input, input);
-      return get(request.ticketID, actors.get().actorID);
+      actors.get();
+      return recorded(table, request.ticketID);
     },
     list(input = {}) {
       const query = parse(WorkContracts.work_list.input, input);
-      const caller = actors.get().actorID;
+      actors.get();
       return traverse(
         table,
         query,
         (row) =>
-          visible(row, caller) && (query.status === undefined || row.status === query.status),
+          (query.ownerID === undefined || row.ownerID === query.ownerID) &&
+          (query.requesterID === undefined || row.requesterID === query.requesterID) &&
+          (query.status === undefined || row.status === query.status),
       );
     },
     update(input) {
@@ -86,7 +82,7 @@ export function createWork(
       const caller = actors.get().actorID;
       if (request.ownerID !== undefined) activeActor(actors, request.ownerID);
       return store.transaction(() => {
-        const row = get(request.ticketID, caller);
+        const row = recorded(table, request.ticketID);
         editable(row);
         requireThat(
           (request.goal === undefined && request.ownerID === undefined) ||
@@ -121,7 +117,7 @@ export function createWork(
       const request = parse(WorkContracts.work_submit.input, input);
       const caller = actors.get().actorID;
       return store.transaction(() => {
-        const row = get(request.ticketID, caller);
+        const row = recorded(table, request.ticketID);
         editable(row);
         requireThat(row.ownerID === caller, "forbidden", "only owner submits work");
         const at = now();
@@ -145,7 +141,7 @@ export function createWork(
       const request = parse(WorkContracts.work_review.input, input);
       const caller = actors.get().actorID;
       return store.transaction(() => {
-        const row = get(request.ticketID, caller);
+        const row = recorded(table, request.ticketID);
         requireThat(row.requesterID === caller, "forbidden", "only requester reviews work");
         requireThat(
           row.status === "submitted" && row.submission?.submissionID === request.submissionID,

@@ -20,6 +20,8 @@ Links: [composition](https://github.com/uniac-ai/AgentOrg/blob/cca137062a9c2d979
 
 The replacement exposes Tools explicitly and has no configurable package-extension slot today. Installed-package integration therefore requires a small separately reviewed Hub composition change. Actor advertisement/reverse invocation is not an extension path. Public Actor callers consume Hub operations; they do not register feature modules.
 
+The host must compose one organization's canonical authority and WorkspaceStore. Every active admitted Actor reads all shared Work and Forms, including history, while Messages stays private to its parties. Shared reads use the admitted identity without elevation or hierarchy overrides. Work/Form list criteria intersect before pagination and never select a caller or grant writes. Optional Work associations validate existing shared Work on creation; Form visibility does not depend on Work-party membership. Human HTTP projections must call exposed Hub operations under ordinary admitted Actor authority.
+
 ## Correspondence cutover and remaining decisions
 
 Legacy Hub Messages exposes `message_send`, `messages`, and `message_read`. Workspace Messages also exposes `message_send`; simply appending both features would create duplicate invocation aliases. The replacement dispatch chooses the first matching interface alias. This must be resolved explicitly before wiring. Old Hub `question_ask/question_answer/questions` maps conceptually to standalone Forms with optional Work context, subject to respondent/answer-authority and retention decisions. Hub team views also consume existing correspondence; their read dependency must be mapped if that owner changes.

@@ -47,13 +47,17 @@ export const WorkContracts = {
     true,
   ),
   work_get: contract(
-    "Read work and retained history as requester or owner, including accepted work.",
+    "Read shared organization work and retained history, including accepted work.",
     ticketID,
     Work,
   ),
   work_list: contract(
-    "Traverse currently visible work upserts within an optional status filter.",
-    ListInput.extend({ status: WorkStatus.optional() }),
+    "Traverse shared work upserts matching every supplied owner, requester and status filter.",
+    ListInput.extend({
+      ownerID: ID.optional(),
+      requesterID: ID.optional(),
+      status: WorkStatus.optional(),
+    }),
     pageOf(Work),
   ),
   work_update: contract(

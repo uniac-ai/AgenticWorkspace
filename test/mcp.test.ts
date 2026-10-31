@@ -169,7 +169,46 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
     "accepted",
   );
   await refused(viewer, "work_create", { goal: "Rejected write", ownerID: "owner" }, "forbidden");
-  await refused(outsider, "work_get", { ticketID: ticket.ticketID }, "not_found");
+  assert.equal(
+    (await call<Work>(outsider, "work_get", { ticketID: ticket.ticketID })).status,
+    "accepted",
+  );
+  assert.equal(
+    (
+      await call<Page<Work>>(outsider, "work_list", {
+        ownerID: "owner",
+        requesterID: "requester",
+        status: "accepted",
+        limit: 1,
+      })
+    ).items[0]?.ticketID,
+    ticket.ticketID,
+  );
+  assert.equal(
+    (await call<Form>(outsider, "form_get", { formID: form.formID })).status,
+    "resolved",
+  );
+  assert.equal(
+    (
+      await call<Page<Form>>(outsider, "form_list", {
+        requesterID: "requester",
+        respondentID: "owner",
+        status: "resolved",
+      })
+    ).items.length,
+    1,
+  );
+  assert.deepEqual(
+    (await call<Page<Form>>(outsider, "form_list", { awaitingActorID: "owner" })).items,
+    [],
+  );
+  await refused(
+    outsider,
+    "form_respond",
+    { formID: form.formID, expectedRevision: changed.revision, answers: { answer: "yes" } },
+    "forbidden",
+  );
+  await refused(outsider, "message_get", { messageID: message.messageID }, "not_found");
   await refused(
     requester,
     "work_review",

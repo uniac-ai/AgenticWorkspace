@@ -51,7 +51,7 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
     form_close: bind(FormContracts.form_close, (input) => forms.close(input)),
   };
   const server = new Server(
-    { name: `agentic-workspace-${purpose}`, version: "0.1.0" },
+    { name: `agentic-workspace-${purpose}`, version: "0.2.0" },
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => {

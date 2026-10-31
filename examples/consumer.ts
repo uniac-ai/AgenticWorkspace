@@ -22,7 +22,19 @@ try {
     respondentIDs: ["owner"],
     fields: [{ name: "ready", label: "Ready for review?", required: true }],
   });
-  console.log(JSON.stringify(work.get({ ticketID: ticket.ticketID })));
+  const reader = createActors(fixtureAuthority().authority, "outsider");
+  console.log(
+    JSON.stringify({
+      ticket: createWork(reader, store).get({ ticketID: ticket.ticketID }),
+      assigned: work.list({ ownerID: "owner", requesterID: "requester", status: "open" }),
+      awaiting: createForms(reader, store).list({
+        requesterID: "requester",
+        respondentID: "owner",
+        status: "open",
+        awaitingActorID: "owner",
+      }),
+    }),
+  );
 } finally {
   store.close();
 }

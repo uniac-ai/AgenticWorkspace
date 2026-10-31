@@ -34,10 +34,16 @@ export const FormContracts = {
     Form,
     true,
   ),
-  form_get: contract("Read a form as requester, respondent or current work party.", formID, Form),
+  form_get: contract("Read a shared organization form and retained history.", formID, Form),
   form_list: contract(
-    "Traverse currently visible form upserts, optionally filtered by work.",
-    ListInput.extend({ workID: ID.optional() }),
+    "Traverse shared form upserts matching every supplied filter; awaiting selects open designated forms with no response entry for that Actor.",
+    ListInput.extend({
+      workID: ID.optional(),
+      requesterID: ID.optional(),
+      respondentID: ID.optional(),
+      status: FormState.shape.status.optional(),
+      awaitingActorID: ID.optional(),
+    }),
     pageOf(Form),
   ),
   form_respond: contract(
