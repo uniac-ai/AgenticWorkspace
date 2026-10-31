@@ -20,7 +20,7 @@ test("packed external TypeScript consumer uses only public exports", { timeout: 
     writeFileSync(join(dir, "package.json"), JSON.stringify({ private: true, type: "module" }));
     execFileSync(
       "npm",
-      ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", join(dir, archive)],
+      ["install", "--ignore-scripts", "--no-audit", "--no-fund", join(dir, archive)],
       { cwd: dir, stdio: "pipe" },
     );
     writeFileSync(
