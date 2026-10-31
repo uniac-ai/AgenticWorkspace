@@ -9,7 +9,6 @@ import {
   type Page,
   parse,
   requireThat,
-  WorkspaceError,
 } from "../contracts/index.js";
 import type { WorkspaceStore } from "../persistence/index.js";
 import { now, recorded, traverse } from "../records.js";
@@ -28,22 +27,6 @@ export function createForms(
   work?: WorkReader,
 ): FormsClient {
   const table = store.forms;
-  function visible(row: FormState, caller: string): boolean {
-    if (row.requesterID === caller || row.respondentIDs.includes(caller)) return true;
-    if (row.workID === undefined || work === undefined) return false;
-    try {
-      work.get({ ticketID: row.workID });
-      return true;
-    } catch (error) {
-      if (error instanceof WorkspaceError && error.code === "not_found") return false;
-      throw error;
-    }
-  }
-  function get(id: string, caller: string): Form {
-    const row = recorded(table, id);
-    requireThat(visible(row, caller), "not_found", "record not found");
-    return row;
-  }
   const state = (row: Form): FormState => {
     const { revision: _revision, cursor: _cursor, history: _history, ...data } = row;
     return data;
@@ -85,23 +68,31 @@ export function createForms(
     },
     get(input) {
       const request = parse(FormContracts.form_get.input, input);
-      return get(request.formID, actors.get().actorID);
+      actors.get();
+      return recorded(table, request.formID);
     },
     list(input = {}) {
       const query = parse(FormContracts.form_list.input, input);
-      const caller = actors.get().actorID;
+      actors.get();
       return traverse(
         table,
         query,
         (row) =>
-          (query.workID === undefined || row.workID === query.workID) && visible(row, caller),
+          (query.workID === undefined || row.workID === query.workID) &&
+          (query.requesterID === undefined || row.requesterID === query.requesterID) &&
+          (query.respondentID === undefined || row.respondentIDs.includes(query.respondentID)) &&
+          (query.status === undefined || row.status === query.status) &&
+          (query.awaitingActorID === undefined ||
+            (row.status === "open" &&
+              row.respondentIDs.includes(query.awaitingActorID) &&
+              !Object.hasOwn(row.responses, query.awaitingActorID))),
       );
     },
     respond(input) {
       const request = parse(FormContracts.form_respond.input, input);
       const caller = actors.get().actorID;
       return store.transaction(() => {
-        const row = get(request.formID, caller);
+        const row = recorded(table, request.formID);
         requireThat(
           row.respondentIDs.includes(caller),
           "forbidden",
@@ -141,7 +132,7 @@ export function createForms(
       const request = parse(FormContracts.form_close.input, input);
       const caller = actors.get().actorID;
       return store.transaction(() => {
-        const row = get(request.formID, caller);
+        const row = recorded(table, request.formID);
         requireThat(row.requesterID === caller, "forbidden", "only form requester closes a form");
         requireThat(row.status === "open", "conflict", "form is closed");
         const at = now();
