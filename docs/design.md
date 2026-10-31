@@ -47,6 +47,8 @@ The required synchronous canonical `within(callerID, actorID, ancestorID)` relat
 
 The root composition factory wires distinct clients; it is not another multi-domain operation client. Consumers can construct and use any module independently through its own export. Contracts depend only on Zod. Domain modules import persistence types; native SQLite is loaded only through the persistence implementation export.
 
+Message peer windows use the existing table's all/head/history reads. Exact private pair/direction qualification precedes selection; the optional latest/older path selects the newest qualified rows and emits the original ascending Page. Omitted before uses the unchanged shared forward traversal. There is no conversation registry, new store/query layer, output DTO, receipt state or change to Work/Form traversal. Older and forward positions remain separate query continuations.
+
 ## Persistence and state changes
 
 SQLite has separate current-snapshot and history tables for Messages, Work and Forms. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. Old submissions, reviews and responses remain in history after newer ones replace their current fields. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
