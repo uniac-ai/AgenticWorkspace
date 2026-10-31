@@ -1,7 +1,8 @@
-/** Canonical identity/discovery client; the module stores no Actors or credentials. */
+/** Canonical identity, discovery and membership; the module stores no Actors or credentials. */
 import {
   Actor,
   ActorContracts,
+  ID,
   type Input,
   type Page,
   parse,
@@ -12,10 +13,13 @@ export interface ActorAuthority {
   /** Canonical visibility, including access to the admitted caller itself. */
   get(callerID: string, actorID: string): Actor | undefined;
   list(callerID: string, query: { after: number; limit: number }): Page<Actor>;
+  /** Inclusive retained ancestry, including closed members/anchors; unknown IDs return false. */
+  within(callerID: string, actorID: string, ancestorID: string): boolean;
 }
 export interface ActorsClient {
   get(input?: Input<typeof ActorContracts.actor_get.input>): Actor;
   list(input?: Input<typeof ActorContracts.actor_list.input>): Page<Actor>;
+  within(actorID: string, ancestorID: string): boolean;
 }
 export function createActors(authority: ActorAuthority, callerID: string): ActorsClient {
   function caller(): Actor {
@@ -39,6 +43,12 @@ export function createActors(authority: ActorAuthority, callerID: string): Actor
         ActorContracts.actor_list.output,
         authority.list(callerID, query),
       ) as Page<Actor>;
+    },
+    within(actorID, ancestorID) {
+      const member = parse(ID, actorID);
+      const ancestor = parse(ID, ancestorID);
+      caller();
+      return authority.within(callerID, member, ancestor);
     },
   };
 }

@@ -6,24 +6,24 @@ Runtime request/record schemas and derived TypeScript types are maintained in [s
 
 Every successful mutation returns the full resulting record with stable ID, revision, cursor and retained history. Execution MCP exposes every row below. Viewer MCP exposes only rows marked read. Actor lifecycle administration is outside this inventory.
 
-| Tool         | Input                                                                                  | Purpose                                          |
-| ------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| actor_get    | `{actorID?}`                                                                           | Read self by default or a visible Actor          |
-| actor_list   | `{after?,limit?}`                                                                      | Read canonical visible directory                 |
-| message_send | `{recipientID,text,workID?}`                                                           | Persist direct correspondence                    |
-| message_get  | `{messageID}`                                                                          | Read record/history                              |
-| message_list | `{direction?:incoming\|outgoing\|all,after?,limit?}`                                   | Read visible current upserts                     |
-| work_create  | `{goal,ownerID}`                                                                       | Create ticket; caller becomes requester/reviewer |
-| work_get     | `{ticketID}`                                                                           | Read record/history, including accepted work     |
-| work_list    | `{ownerID?,requesterID?,status?,after?,limit?}`                                        | Read matching shared current upserts             |
-| work_update  | `{ticketID,expectedRevision,goal?,ownerID?,progress?,status?:open\|active\|blocked}`   | Update at least one allowed field                |
-| work_submit  | `{ticketID,expectedRevision,result,evidence[]}`                                        | Persist new submissionID, result/evidence        |
-| work_review  | `{ticketID,expectedRevision,submissionID,verdict:accepted\|changes_requested,comment}` | Review the exact current submission              |
-| form_create  | `{workID?,respondentIDs[],fields:[{name,label,required,options?}]}`                    | Create independent or work-linked interaction    |
-| form_get     | `{formID}`                                                                             | Read record/history                              |
-| form_list    | `{workID?,requesterID?,respondentID?,status?,awaitingActorID?,after?,limit?}`          | Read matching shared current upserts             |
-| form_respond | `{formID,expectedRevision,answers:{field:value}}`                                      | Add/revise designated respondent's answers       |
-| form_close   | `{formID,expectedRevision,status:resolved\|cancelled,resolution}`                      | Persist form resolution/cancellation             |
+| Tool         | Input                                                                                                                            | Purpose                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| actor_get    | `{actorID?}`                                                                                                                     | Read self by default or a visible Actor          |
+| actor_list   | `{after?,limit?}`                                                                                                                | Read canonical visible directory                 |
+| message_send | `{recipientID,text,workID?}`                                                                                                     | Persist direct correspondence                    |
+| message_get  | `{messageID}`                                                                                                                    | Read record/history                              |
+| message_list | `{direction?:incoming\|outgoing\|all,after?,limit?}`                                                                             | Read visible current upserts                     |
+| work_create  | `{goal,ownerID}`                                                                                                                 | Create ticket; caller becomes requester/reviewer |
+| work_get     | `{ticketID}`                                                                                                                     | Read record/history, including accepted work     |
+| work_list    | `{ownerID?,requesterID?,ownerWithin?,requesterWithin?,status?,after?,limit?}`                                                    | Read matching shared current upserts             |
+| work_update  | `{ticketID,expectedRevision,goal?,ownerID?,progress?,status?:open\|active\|blocked}`                                             | Update at least one allowed field                |
+| work_submit  | `{ticketID,expectedRevision,result,evidence[]}`                                                                                  | Persist new submissionID, result/evidence        |
+| work_review  | `{ticketID,expectedRevision,submissionID,verdict:accepted\|changes_requested,comment}`                                           | Review the exact current submission              |
+| form_create  | `{workID?,respondentIDs[],fields:[{name,label,required,options?}]}`                                                              | Create independent or work-linked interaction    |
+| form_get     | `{formID}`                                                                                                                       | Read record/history                              |
+| form_list    | `{workID?,requesterID?,respondentID?,status?,awaitingActorID?,requesterWithin?,respondentWithin?,awaitingWithin?,after?,limit?}` | Read matching shared current upserts             |
+| form_respond | `{formID,expectedRevision,answers:{field:value}}`                                                                                | Add/revise designated respondent's answers       |
+| form_close   | `{formID,expectedRevision,status:resolved\|cancelled,resolution}`                                                                | Persist form resolution/cancellation             |
 
 Form answers are strings. Every response supplies a complete answer set: required fields must be nonblank, supplied field names must exist, and supplied choice answers must match an option. Revisions retain earlier answer sets. Field names, options and respondent IDs are unique. A one-field form is a question.
 
@@ -37,9 +37,13 @@ The host composes canonical Actor authority and a WorkspaceStore for one Hub org
 
 ## List filters
 
-Work accepts optional `ownerID`, `requesterID` and `status`. Forms accepts optional `workID`, `requesterID`, `respondentID`, `status` and `awaitingActorID`. All supplied predicates intersect with AND before pagination. ID filters use exact equality; respondent filters test designated membership. Status values use the existing Work enum or Form `open|resolved|cancelled` enum.
+Work accepts optional `ownerID`, `requesterID`, `status`, `ownerWithin` and `requesterWithin`. Forms accepts optional `workID`, `requesterID`, `respondentID`, `status`, `awaitingActorID`, `requesterWithin`, `respondentWithin` and `awaitingWithin`. All supplied predicates intersect with AND before pagination. ID filters use exact equality; respondent filters test designated membership. Status values use the existing Work enum or Form `open|resolved|cancelled` enum.
 
 `awaitingActorID` selects only open Forms that designate that Actor and have no own response entry for them. A recorded empty answer object counts as a response; closed Forms never await anyone. It may be combined with another respondent filter. Filter IDs do not trigger Actor lookup or impersonation; unknown IDs yield empty matching sets. Omit filters to traverse all shared records.
+
+Subtree criteria use the existing ID schema. The required host `ActorAuthority.within(callerID, actorID, ancestorID)` tests the named canonical position and every descendant through retained relationships, including closed Actors and closed anchors without a depth limit. Unknown members or anchors return false. Bound `ActorsClient.within(actorID, ancestorID)` revalidates the admitted caller and delegates membership without selected-profile lookup or caller substitution. No new Actor field or MCP Tool is added.
+
+`ownerWithin` tests current Work ownership; `requesterWithin` tests immutable record requester, the scope from which it originated. Neither implies causal ticket lineage. `respondentWithin` selects any designated respondent in the subtree. `awaitingWithin` selects any designated respondent in the subtree with no own response entry, only while the Form is open; respondent active/closed state does not change that recorded fact. Members OR within each existential predicate; separate respondent and awaiting predicates may match different respondents. Any active caller may query any branch; membership grants no write role or Message access.
 
 ## Work transitions and concurrency
 
@@ -54,6 +58,8 @@ Requester and owner may be the same Actor. Submission still enters `submitted` u
 Messages, Work and Forms traverse current snapshots in ascending module cursor order, strictly after `after` (default zero). Sending assigns a Message's cursor; Messages have no public update after send. A list position is not a delivery acknowledgement. Work/Form mutations move the changed record to a new module cursor. Authorized matching rows are filtered before applying `limit` (default 50, maximum 100). Response `{items,after}` continues from the last returned row's cursor; an empty page retains the input cursor. A continuation belongs to the same module, caller and filter scope. Reset to zero when changing scope. Directory cursors are delegated to canonical authority.
 
 For Work and Forms, an updated record can appear again after an earlier page. Status changes, reassignment or a new response can remove a record from a filter without a matching row or tombstone. Consumers needing a complete current matching view must start a fresh traversal with the same filters and reconcile IDs. Traversals do not provide an immutable snapshot or complete cache synchronization feed. Reopen retains cursor heads/history. Malformed, negative, fractional, unsafe or future module cursors return `invalid_input` and are never silently clamped/reset.
+
+The current adapter scans current snapshots before filtering; the page limit bounds output, not scan or ancestry-walk cost. Keep each module/lane's continuation separately under the same Hub, caller and normalized filters/anchor. Clients use bounded from-zero refreshes to replace/reconcile matching IDs; a partial or failed refresh cannot establish disappearance or a complete count. Concurrent updates may move/repeat records, so use stable IDs/revisions for display. A short page means no more matches observed by that call, not an immutable snapshot.
 
 ## Errors and protocol
 

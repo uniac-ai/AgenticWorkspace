@@ -51,7 +51,20 @@ if (Actor.safeParse(classifiedActor).success) throw new Error('Actor schema acce
 if (ActorContracts.actor_get.input.safeParse({kind:'human'}).success) throw new Error('Actor lookup accepted kind');
 const peer: Actor = {...actor,actorID:'peer',name:'Peer'};
 const observer: Actor = {...actor,actorID:'observer',name:'Observer'};
-const authority: ActorAuthority = {get: (_caller,id) => [actor,peer,observer].find(row=>row.actorID===id),list: () => ({items:[actor,peer,observer],after:3})};
+const authority: ActorAuthority = {
+  get: (_caller,id) => [actor,peer,observer].find(row=>row.actorID===id),
+  list: () => ({items:[actor,peer,observer],after:3}),
+  within: (caller,id,ancestor) => {
+    assert.equal(caller,'observer');
+    return [actor,peer,observer].some(row=>row.actorID===id) && (ancestor===id || ancestor==='self');
+  },
+};
+// @ts-expect-error Every host must supply canonical synchronous membership.
+const incompleteAuthority: ActorAuthority = {get:authority.get,list:authority.list};
+assert.ok(incompleteAuthority);
+// @ts-expect-error Canonical membership must return a synchronous boolean.
+const asynchronousAuthority: ActorAuthority = {...authority,within:async()=>true};
+assert.ok(asynchronousAuthority);
 try {
   createActors({...authority,get:()=>classifiedActor},'self').get();
   throw new Error('Actor client accepted kind');
@@ -101,8 +114,12 @@ try {
   assert.equal(closed.status,'resolved');
   const pending = bindWorkspace(authority,store,'peer').forms.create({workID:ticket.ticketID,respondentIDs:['peer'],fields:[{name:'answer',label:'Optional',required:false}]});
   const clients = bindWorkspace(authority,store,'observer');
-  assert.deepEqual(clients.work.list({ownerID:'self',requesterID:'self',status:'open'}).items,[ticket]);
-  assert.deepEqual(clients.forms.list({workID:ticket.ticketID,requesterID:'peer',respondentID:'peer',status:'open',awaitingActorID:'peer'}).items,[pending]);
+  assert.equal(clients.actors.within('peer','self'),true);
+  assert.equal(clients.actors.within('self','peer'),false);
+  assert.deepEqual(clients.work.list({ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:'open'}).items,[ticket]);
+  assert.deepEqual(clients.work.list({ownerWithin:'peer'}).items,[]);
+  assert.deepEqual(clients.forms.list({workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',respondentID:'peer',respondentWithin:'peer',status:'open',awaitingActorID:'peer',awaitingWithin:'self'}).items,[pending]);
+  assert.deepEqual(clients.forms.list({awaitingWithin:'absent'}).items,[]);
   for (const purpose of ['execution','viewer'] as const) {
     const server = createMcpServer(clients,purpose);
     const client = new Client({name:'installed-package-consumer',version:'1'});
@@ -115,9 +132,9 @@ try {
       assert.equal(formTool?.outputSchema?.required?.includes('workID'),false);
       const formRead = await client.callTool({name:'form_get',arguments:{formID:form.formID}});
       assert.deepEqual(formRead.structuredContent,closed);
-      const workRead = await client.callTool({name:'work_list',arguments:{ownerID:'self',requesterID:'self',status:'open',limit:1}});
+      const workRead = await client.callTool({name:'work_list',arguments:{ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:'open',limit:1}});
       assert.deepEqual((workRead.structuredContent as {items:unknown[]}).items,[ticket]);
-      const awaiting = await client.callTool({name:'form_list',arguments:{workID:ticket.ticketID,requesterID:'peer',respondentID:'peer',status:'open',awaitingActorID:'peer',limit:1}});
+      const awaiting = await client.callTool({name:'form_list',arguments:{workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',respondentID:'peer',respondentWithin:'peer',status:'open',awaitingActorID:'peer',awaitingWithin:'self',limit:1}});
       assert.deepEqual((awaiting.structuredContent as {items:unknown[]}).items,[pending]);
       if (purpose==='execution') {
         const denied = await client.callTool({name:'form_respond',arguments:{formID:pending.formID,expectedRevision:1,answers:{}}});
@@ -176,7 +193,7 @@ try {
       readFileSync(join(dir, "node_modules/@uniac/agentic-workspace/package.json"), "utf8"),
     );
     assert.equal(installed.private, true);
-    assert.equal(installed.version, "0.2.0");
+    assert.equal(installed.version, "0.3.0");
     assert.equal(Object.keys(installed.exports).length, 8);
   } finally {
     rmSync(dir, { recursive: true, force: true });

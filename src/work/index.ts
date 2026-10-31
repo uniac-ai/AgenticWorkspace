@@ -74,6 +74,9 @@ export function createWork(
         (row) =>
           (query.ownerID === undefined || row.ownerID === query.ownerID) &&
           (query.requesterID === undefined || row.requesterID === query.requesterID) &&
+          (query.ownerWithin === undefined || actors.within(row.ownerID, query.ownerWithin)) &&
+          (query.requesterWithin === undefined ||
+            actors.within(row.requesterID, query.requesterWithin)) &&
           (query.status === undefined || row.status === query.status),
       );
     },

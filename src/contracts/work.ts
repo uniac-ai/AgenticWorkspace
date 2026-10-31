@@ -52,10 +52,12 @@ export const WorkContracts = {
     Work,
   ),
   work_list: contract(
-    "Traverse shared work upserts matching every supplied owner, requester and status filter.",
+    "Traverse shared work upserts matching every exact, status and inclusive canonical subtree filter.",
     ListInput.extend({
       ownerID: ID.optional(),
       requesterID: ID.optional(),
+      ownerWithin: ID.optional(),
+      requesterWithin: ID.optional(),
       status: WorkStatus.optional(),
     }),
     pageOf(Work),
