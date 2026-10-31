@@ -2,14 +2,14 @@
 
 Durable direct messages, work tickets, and work-linked forms for interchangeable human and software Actor clients. Four separate clients expose identity/discovery, Messages, Work tracking, and Forms. Execution and viewer MCP servers share their records and authority rules.
 
-This private package is a standalone fixture implementation. The human selected eventual installation inside AgentOrg Hub. Production admission, canonical Actor binding, existing messaging/questions overlap, and host runtime compatibility still require the [adapter checkpoint](docs/hub-integration.md). The runnable example uses model-free fixture identities; it is not production admission.
+This private package is a standalone fixture implementation. The human selected eventual installation inside AgentOrg Hub. Production admission, canonical Actor binding, existing messaging/questions overlap, and Hub composition still require the [adapter checkpoint](docs/hub-integration.md). The runnable example uses model-free fixture identities; it is not production admission.
 
 ## Run
 
-Use Node **24.22.1** (the CI runtime), then:
+The package declares Node **>=22.13**, matching Hub's existing engine floor. The tested CI runtimes are **22.23.4** and **24.22.1**; use either, then:
 
 ```sh
-npm ci
+npm ci --engine-strict
 npm run check
 npm test
 npm run build

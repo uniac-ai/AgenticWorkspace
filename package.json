@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Durable Actor correspondence, work tracking, and forms with shared MCP interfaces",
   "engines": {
-    "node": ">=24.22.1"
+    "node": ">=22.13"
   },
   "exports": {
     ".": {
