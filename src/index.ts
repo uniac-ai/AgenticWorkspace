@@ -1,0 +1,19 @@
+/** Composition returns four distinct clients with explicit module dependencies. */
+import { type ActorAuthority, createActors } from "./actors/index.js";
+import { createForms } from "./forms/index.js";
+import { createMessages } from "./messages/index.js";
+import type { WorkspaceStore } from "./persistence/index.js";
+import { createWork } from "./work/index.js";
+
+/** actorID is supplied by trusted admission, never by workspace tool input. */
+export function bindWorkspace(authority: ActorAuthority, store: WorkspaceStore, actorID: string) {
+  const actors = createActors(authority, actorID);
+  const work = createWork(actors, store);
+  return {
+    actors,
+    work,
+    messages: createMessages(actors, store, work),
+    forms: createForms(actors, store, work),
+  };
+}
+export type WorkspaceClients = ReturnType<typeof bindWorkspace>;

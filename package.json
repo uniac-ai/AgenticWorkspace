@@ -1,0 +1,66 @@
+{
+  "name": "@uniac/agentic-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Durable Actor correspondence, work tracking, and forms with shared MCP interfaces",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/src/contracts/index.d.ts",
+      "default": "./dist/src/contracts/index.js"
+    },
+    "./actors": {
+      "types": "./dist/src/actors/index.d.ts",
+      "default": "./dist/src/actors/index.js"
+    },
+    "./messages": {
+      "types": "./dist/src/messages/index.d.ts",
+      "default": "./dist/src/messages/index.js"
+    },
+    "./work": {
+      "types": "./dist/src/work/index.d.ts",
+      "default": "./dist/src/work/index.js"
+    },
+    "./forms": {
+      "types": "./dist/src/forms/index.d.ts",
+      "default": "./dist/src/forms/index.js"
+    },
+    "./persistence": {
+      "types": "./dist/src/persistence/index.d.ts",
+      "default": "./dist/src/persistence/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/src/mcp/index.d.ts",
+      "default": "./dist/src/mcp/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "dist/examples",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "biome check .",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "start": "node dist/examples/stdio.js",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2"
+  }
+}

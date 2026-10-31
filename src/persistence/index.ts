@@ -1,0 +1,27 @@
+/** Transactional snapshots and retained module history; SQLite is the v1 implementation. */
+import type { FormState, HistoryEntry, MessageState, WorkState } from "../contracts/index.js";
+
+export type Snapshot<T> = T & { revision: number; cursor: number };
+export type Recorded<T> = Snapshot<T> & { history: HistoryEntry[] };
+export interface RecordTable<T> {
+  get(id: string): Snapshot<T> | undefined;
+  all(): Snapshot<T>[];
+  history(id: string): HistoryEntry[];
+  head(): number;
+  /** Called inside transaction; expectedRevision is absent only for insertion. */
+  save(
+    id: string,
+    data: T,
+    event: Pick<HistoryEntry, "actorID" | "at" | "action" | "detail">,
+    expectedRevision?: number,
+  ): Recorded<T>;
+}
+export interface WorkspaceStore {
+  messages: RecordTable<MessageState>;
+  work: RecordTable<WorkState>;
+  forms: RecordTable<FormState>;
+  /** Callback is synchronous; state checks and writes share one transaction. */
+  transaction<T>(callback: () => T): T;
+  close(): void;
+}
+export { openSqlite } from "./sqlite.js";
