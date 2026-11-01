@@ -12,7 +12,7 @@ export function bindWorkspace(authority: ActorAuthority, store: WorkspaceStore, 
   return {
     actors,
     work,
-    messages: createMessages(actors, store, work),
+    messages: createMessages(actors, store),
     forms: createForms(actors, store, work),
   };
 }

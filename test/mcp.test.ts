@@ -8,7 +8,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { fixtureAuthority } from "../examples/authority.js";
-import type { Actor, Form, Message, Page, Work } from "../src/contracts/index.js";
+import type { Actor, Form, List, Message, Page, Work } from "../src/contracts/index.js";
 import { bindWorkspace } from "../src/index.js";
 import { createMcpServer, type McpPurpose } from "../src/mcp/index.js";
 import { openSqlite } from "../src/persistence/index.js";
@@ -105,18 +105,22 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
     (await call<Work>(viewer, "work_get", { ticketID: ticket.ticketID })).ticketID,
     ticket.ticketID,
   );
-  assert.equal((await call<Page<Work>>(viewer, "work_list")).items[0]?.ticketID, ticket.ticketID);
+  assert.equal((await call<List<Work>>(viewer, "work_list")).items[0]?.ticketID, ticket.ticketID);
+  assert.equal(
+    (await call<Work>(viewer, "work_get", { ticketID: ticket.ticketID, history: true })).history
+      ?.length,
+    1,
+  );
   const message = await call<Message>(requester, "message_send", {
     recipientID: "owner",
     text: "Protocol message",
-    workID: ticket.ticketID,
   });
   assert.equal(
     (await call<Message>(viewer, "message_get", { messageID: message.messageID })).text,
     "Protocol message",
   );
   assert.equal(
-    (await call<Page<Message>>(viewer, "message_list", { direction: "outgoing" })).items.length,
+    (await call<List<Message>>(viewer, "message_list", { direction: "outgoing" })).items.length,
     1,
   );
   for (const removed of ["message_acknowledge", "message_handle"])
@@ -128,7 +132,7 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   });
   assert.equal(
     (
-      await call<Page<Form>>(outsider, "form_list", {
+      await call<List<Form>>(outsider, "form_list", {
         requesterWithin: "requester",
         respondentWithin: "owner",
         awaitingWithin: "owner",
@@ -143,10 +147,10 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   });
   const changed = await call<Form>(viewer, "form_get", { formID: form.formID });
   assert.equal(changed.responses.owner?.answer, "yes");
-  assert.equal((await call<Page<Form>>(viewer, "form_list")).items.length, 1);
+  assert.equal((await call<List<Form>>(viewer, "form_list")).items.length, 1);
   assert.equal(Object.hasOwn(form, "workID"), false);
   assert.deepEqual(
-    (await call<Page<Form>>(outsider, "form_list", { awaitingWithin: "outsider" })).items,
+    (await call<List<Form>>(outsider, "form_list", { awaitingWithin: "outsider" })).items,
     [],
   );
   await refused(outsider, "work_list", { ownerWithin: 42 }, "invalid_input");
@@ -190,12 +194,12 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   );
   assert.equal(
     (
-      await call<Page<Work>>(outsider, "work_list", {
+      await call<List<Work>>(outsider, "work_list", {
         ownerID: "owner",
         requesterID: "requester",
         ownerWithin: "owner",
         requesterWithin: "requester",
-        status: "accepted",
+        status: ["accepted"],
         limit: 1,
       })
     ).items[0]?.ticketID,
@@ -207,18 +211,18 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   );
   assert.equal(
     (
-      await call<Page<Form>>(outsider, "form_list", {
+      await call<List<Form>>(outsider, "form_list", {
         requesterID: "requester",
         respondentID: "owner",
         requesterWithin: "requester",
         respondentWithin: "owner",
-        status: "resolved",
+        status: ["resolved"],
       })
     ).items.length,
     1,
   );
   assert.deepEqual(
-    (await call<Page<Form>>(outsider, "form_list", { awaitingActorID: "owner" })).items,
+    (await call<List<Form>>(outsider, "form_list", { awaitingActorID: "owner" })).items,
     [],
   );
   await refused(

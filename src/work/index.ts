@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { type ActorsClient, activeActor } from "../actors/index.js";
 import {
   type Input,
-  type Page,
+  type List,
   parse,
   requireThat,
   type Work,
@@ -11,14 +11,14 @@ import {
   type WorkState,
 } from "../contracts/index.js";
 import type { WorkspaceStore } from "../persistence/index.js";
-import { now, recorded, traverse } from "../records.js";
+import { now, published, recorded, stateOf, traverse } from "../records.js";
 
 export interface WorkReader {
   get(input: Input<typeof WorkContracts.work_get.input>): Work;
 }
 export interface WorkClient extends WorkReader {
   create(input: Input<typeof WorkContracts.work_create.input>): Work;
-  list(input?: Input<typeof WorkContracts.work_list.input>): Page<Work>;
+  list(input?: Input<typeof WorkContracts.work_list.input>): List<Work>;
   update(input: Input<typeof WorkContracts.work_update.input>): Work;
   submit(input: Input<typeof WorkContracts.work_submit.input>): Work;
   review(input: Input<typeof WorkContracts.work_review.input>): Work;
@@ -34,10 +34,6 @@ export function createWork(
       "conflict",
       "work is frozen for review or accepted",
     );
-  function state(row: Work): WorkState {
-    const { revision: _revision, cursor: _cursor, history: _history, ...data } = row;
-    return data;
-  }
   return {
     create(input) {
       const request = parse(WorkContracts.work_create.input, input);
@@ -46,7 +42,7 @@ export function createWork(
       return store.transaction(() => {
         const at = now();
         const ticketID = randomUUID();
-        return table.save(
+        const saved = table.save(
           ticketID,
           {
             ticketID,
@@ -58,26 +54,33 @@ export function createWork(
           },
           { actorID: caller, at, action: "created", detail: request },
         );
+        return published(saved);
       });
     },
     get(input) {
       const request = parse(WorkContracts.work_get.input, input);
       actors.get();
-      return recorded(table, request.ticketID);
+      return recorded(table, request.ticketID, request.history);
     },
     list(input = {}) {
       const query = parse(WorkContracts.work_list.input, input);
       actors.get();
+      const { after: _after, limit: _limit, ...filter } = query;
+      const requesters = query.requesterID === undefined ? undefined : [query.requesterID].flat();
       return traverse(
+        actors,
         table,
         query,
+        ["work", filter],
         (row) =>
           (query.ownerID === undefined || row.ownerID === query.ownerID) &&
-          (query.requesterID === undefined || row.requesterID === query.requesterID) &&
+          (requesters === undefined || requesters.includes(row.requesterID)) &&
           (query.ownerWithin === undefined || actors.within(row.ownerID, query.ownerWithin)) &&
           (query.requesterWithin === undefined ||
             actors.within(row.requesterID, query.requesterWithin)) &&
-          (query.status === undefined || row.status === query.status),
+          (query.status === undefined || query.status.includes(row.status)) &&
+          (query.updatedSince === undefined || row.updatedAt >= query.updatedSince),
+        (row) => [row.requesterID, row.ownerID, row.review?.reviewerID],
       );
     },
     update(input) {
@@ -100,7 +103,7 @@ export function createWork(
           "only owner records progress or status",
         );
         const { ticketID, expectedRevision, ...updates } = request;
-        const data = state(row);
+        const data = stateOf(row);
         if (request.goal !== undefined) data.goal = request.goal;
         if (request.ownerID !== undefined) data.ownerID = request.ownerID;
         if (request.progress !== undefined) data.progress = request.progress;
@@ -108,11 +111,13 @@ export function createWork(
         const detail = Object.fromEntries(
           Object.entries(updates).filter(([, value]) => value !== undefined),
         );
-        return table.save(
-          ticketID,
-          data,
-          { actorID: caller, at: now(), action: "updated", detail },
-          expectedRevision,
+        return published(
+          table.save(
+            ticketID,
+            data,
+            { actorID: caller, at: now(), action: "updated", detail },
+            expectedRevision,
+          ),
         );
       });
     },
@@ -131,12 +136,14 @@ export function createWork(
           evidence: request.evidence,
           at,
         };
-        const { review: _review, ...data } = state(row);
-        return table.save(
-          row.ticketID,
-          { ...data, status: "submitted", submission },
-          { actorID: caller, at, action: "submitted", detail: submission },
-          request.expectedRevision,
+        const { review: _review, ...data } = stateOf(row);
+        return published(
+          table.save(
+            row.ticketID,
+            { ...data, status: "submitted", submission },
+            { actorID: caller, at, action: "submitted", detail: submission },
+            request.expectedRevision,
+          ),
         );
       });
     },
@@ -158,11 +165,13 @@ export function createWork(
           comment: request.comment,
           at: now(),
         };
-        return table.save(
-          row.ticketID,
-          { ...state(row), status: request.verdict, review },
-          { actorID: caller, at: review.at, action: "reviewed", detail: review },
-          request.expectedRevision,
+        return published(
+          table.save(
+            row.ticketID,
+            { ...stateOf(row), status: request.verdict, review },
+            { actorID: caller, at: review.at, action: "reviewed", detail: review },
+            request.expectedRevision,
+          ),
         );
       });
     },

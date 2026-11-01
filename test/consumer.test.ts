@@ -78,7 +78,7 @@ try {
   assert.deepEqual(Object.keys(messages).sort(),['get','list','send']);
   assert.deepEqual(Object.keys(MessageContracts).sort(),['message_get','message_list','message_send']);
   const direct = messages.send({recipientID:'peer',text:'Hello'});
-  const messageKeys = ['messageID','senderID','recipientID','text','createdAt','revision','cursor','history'].sort();
+  const messageKeys = ['messageID','conversationID','senderID','recipientID','text','createdAt','seq'].sort();
   assert.deepEqual(Object.keys(direct).sort(),messageKeys);
   assert.deepEqual(peerMessages.get({messageID:direct.messageID}),direct);
   assert.deepEqual(peerMessages.list({direction:'incoming'}).items,[direct]);
@@ -86,13 +86,14 @@ try {
   assert.notEqual(reply.messageID,direct.messageID);
   assert.deepEqual(messages.get({messageID:direct.messageID}),direct);
   assert.deepEqual(messages.list({direction:'incoming'}).items,[reply]);
-  const legacyList: (input?:{after?:number;limit?:number;direction?:'incoming'|'outgoing'|'all'})=>{items:Message[];after:number} = messages.list;
-  assert.deepEqual(legacyList({direction:'incoming'}).items,[reply]);
+  assert.equal(reply.conversationID,direct.conversationID);
+  assert.deepEqual(messages.list({direction:'incoming',after:direct.seq}).items,[reply]);
   const latest = messages.list({counterpartyID:'peer',before:'latest',limit:1});
-  assert.deepEqual(latest,{items:[reply],after:reply.cursor});
-  assert.deepEqual(messages.list({counterpartyID:'peer',before:latest.items[0]!.cursor}),{items:[direct],after:direct.cursor});
-  assert.deepEqual(Object.keys(latest).sort(),['after','items']);
-  assert.deepEqual(direct.history.map(entry=>entry.action),['sent']);
+  assert.deepEqual(Object.keys(latest).sort(),['actors','items','next','older']);
+  assert.deepEqual(latest.items,[reply]);
+  assert.equal(latest.next,null);
+  assert.deepEqual(latest.actors,{self:{name:'Consumer'},peer:{name:'Peer'}});
+  assert.deepEqual(messages.list({counterpartyID:'peer',before:latest.older!}).items,[direct]);
   for (const field of ['acknowledgedAt','handling'])
     assert.equal(Message.safeParse({...direct,[field]:field==='handling'?{outcome:'Done',at:direct.createdAt}:direct.createdAt}).success,false);
   function publicTypes(message: Message) {
@@ -122,9 +123,9 @@ try {
   const clients = bindWorkspace(authority,store,'observer');
   assert.equal(clients.actors.within('peer','self'),true);
   assert.equal(clients.actors.within('self','peer'),false);
-  assert.deepEqual(clients.work.list({ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:'open'}).items,[ticket]);
+  assert.deepEqual(clients.work.list({ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:['open']}).items,[ticket]);
   assert.deepEqual(clients.work.list({ownerWithin:'peer'}).items,[]);
-  assert.deepEqual(clients.forms.list({workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',respondentID:'peer',respondentWithin:'peer',status:'open',awaitingActorID:'peer',awaitingWithin:'self'}).items,[pending]);
+  assert.deepEqual(clients.forms.list({workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',respondentID:'peer',respondentWithin:'peer',status:['open'],awaitingActorID:'peer',awaitingWithin:'self'}).items,[pending]);
   assert.deepEqual(clients.forms.list({awaitingWithin:'absent'}).items,[]);
   for (const purpose of ['execution','viewer'] as const) {
     const server = createMcpServer(clients,purpose);
@@ -138,9 +139,9 @@ try {
       assert.equal(formTool?.outputSchema?.required?.includes('workID'),false);
       const formRead = await client.callTool({name:'form_get',arguments:{formID:form.formID}});
       assert.deepEqual(formRead.structuredContent,closed);
-      const workRead = await client.callTool({name:'work_list',arguments:{ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:'open',limit:1}});
+      const workRead = await client.callTool({name:'work_list',arguments:{ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:['open'],limit:1}});
       assert.deepEqual((workRead.structuredContent as {items:unknown[]}).items,[ticket]);
-      const awaiting = await client.callTool({name:'form_list',arguments:{workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',respondentID:'peer',respondentWithin:'peer',status:'open',awaitingActorID:'peer',awaitingWithin:'self',limit:1}});
+      const awaiting = await client.callTool({name:'form_list',arguments:{workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',respondentID:'peer',respondentWithin:'peer',status:['open'],awaitingActorID:'peer',awaitingWithin:'self',limit:1}});
       assert.deepEqual((awaiting.structuredContent as {items:unknown[]}).items,[pending]);
       if (purpose==='execution') {
         const denied = await client.callTool({name:'form_respond',arguments:{formID:pending.formID,expectedRevision:1,answers:{}}});
@@ -149,7 +150,7 @@ try {
       assert.deepEqual(tools.filter(tool=>tool.name.startsWith('message_')).map(tool=>tool.name).sort(),purpose==='execution'?['message_get','message_list','message_send']:['message_get','message_list']);
       const properties = tools.find(tool=>tool.name==='message_get')?.outputSchema?.properties;
       assert.ok(properties && typeof properties==='object');
-      assert.deepEqual(Object.keys(properties).sort(),[...messageKeys,'workID'].sort());
+      assert.deepEqual(Object.keys(properties).sort(),messageKeys);
       for (const name of ['message_acknowledge','message_handle']) {
         const result = await client.callTool({name,arguments:{messageID:direct.messageID,outcome:'Done'}});
         assert.equal(result.isError,true);
@@ -162,9 +163,9 @@ try {
       }
       const recent = await client.callTool({name:'message_list',arguments:{counterpartyID:'peer',before:'latest',limit:1}});
       assert.equal((recent.structuredContent as {items:Message[]}).items[0]?.text,'Installed MCP message');
-      assert.deepEqual(Object.keys(recent.structuredContent!).sort(),['after','items']);
+      assert.deepEqual(Object.keys(recent.structuredContent!).sort(),['actors','items','next','older']);
       const noAuthority = await client.callTool({name:'message_list',arguments:{counterpartyID:'self',before:'latest'}});
-      assert.deepEqual(noAuthority.structuredContent,{items:[],after:0});
+      assert.deepEqual(noAuthority.structuredContent,{items:[],next:null,older:null,actors:{}});
       const mixed = await client.callTool({name:'message_list',arguments:{counterpartyID:'peer',before:'latest',after:1}});
       assert.equal(mixed.isError,true);
       const read = await client.callTool({name:'message_get',arguments:{messageID:direct.messageID}});
