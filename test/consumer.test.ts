@@ -112,7 +112,7 @@ try {
   }
   publicTypes(direct);
   const forms = createForms(actors,store);
-  const ticket = Work.parse(work.create({goal:'Consume exported clients',ownerID:'self'}));
+  const ticket = Work.parse(work.create({title:'Consume exported clients',ownerID:'self'}));
   const form = forms.create({respondentIDs:['peer'],fields:[{name:'answer',label:'Ready?',required:true}]});
   assert.equal(Object.hasOwn(form,'workID'),false);
   const peerForms = createForms(createActors(authority,'peer'),store);
@@ -175,7 +175,7 @@ try {
       assert.deepEqual((listed.structuredContent as {items:Message[]}).items,[]);
     } finally {await client.close(); await server.close();}
   }
-  console.log(JSON.stringify({goal:clients.work.get({ticketID:ticket.ticketID}).goal,messages:messages.list().items.length,forms:forms.list().items.length}));
+  console.log(JSON.stringify({title:clients.work.get({ticketID:ticket.ticketID}).title,messages:messages.list().items.length,forms:forms.list().items.length}));
 } finally {store.close();}
 `,
     );
@@ -202,7 +202,7 @@ try {
         stdio: ["ignore", "pipe", "pipe"],
       }),
     );
-    assert.deepEqual(result, { goal: "Consume exported clients", messages: 2, forms: 2 });
+    assert.deepEqual(result, { title: "Consume exported clients", messages: 2, forms: 2 });
     const installed = JSON.parse(
       readFileSync(join(dir, "node_modules/@uniac/agentic-workspace/package.json"), "utf8"),
     );

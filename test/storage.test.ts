@@ -9,6 +9,7 @@ import { bindWorkspace } from "../src/index.js";
 import { openSqlite } from "../src/persistence/index.js";
 
 const at = "2026-10-31T12:00:00.000Z";
+const reviewedAt = "2026-10-31T13:00:00.000Z";
 /** A database as Workspace 0.4 wrote it: no user_version, and Messages may link Work. */
 function legacy(file: string) {
   const db = new DatabaseSync(file);
@@ -36,6 +37,27 @@ function legacy(file: string) {
     "work",
     "ticket",
     { ticketID: "ticket", requesterID: "requester", ...goal, status: "open", createdAt: at },
+    "created",
+    goal,
+  );
+  insert(
+    "work",
+    "accepted",
+    {
+      ticketID: "accepted",
+      requesterID: "requester",
+      ...goal,
+      status: "accepted",
+      createdAt: at,
+      submission: { submissionID: "s", ownerID: "owner", result: "Done", evidence: [], at },
+      review: {
+        submissionID: "s",
+        reviewerID: "requester",
+        verdict: "accepted",
+        comment: "Checked",
+        at: reviewedAt,
+      },
+    },
     "created",
     goal,
   );
@@ -69,17 +91,21 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
       const owner = bindWorkspace(fixtureAuthority().authority, store, "owner");
       const message = owner.messages.get({ messageID: "message" });
       assert.equal(Object.hasOwn(message, "workID"), false);
-      assert.equal(message.seq, 2);
+      assert.equal(message.seq, 3);
       assert.equal(store.messages.history("message")[0]?.detail.workID, "ticket");
-      assert.equal(owner.work.get({ ticketID: "ticket" }).updatedAt, at);
+      const pending = owner.work.get({ ticketID: "ticket" });
+      assert.equal(pending.updatedAt, at);
+      assert.deepEqual(pending.links, []);
+      assert.equal(pending.completedAt, undefined);
+      assert.equal(owner.work.get({ ticketID: "accepted" }).completedAt, reviewedAt);
     } finally {
       store.close();
     }
-    assert.equal(version(file), 1);
+    assert.equal(version(file), 2);
   }
   const fresh = join(dir, "fresh.sqlite");
   openSqlite(fresh).close();
-  assert.equal(version(fresh), 1);
+  assert.equal(version(fresh), 2);
   const newer = new DatabaseSync(file);
   newer.exec("PRAGMA user_version=99");
   newer.close();

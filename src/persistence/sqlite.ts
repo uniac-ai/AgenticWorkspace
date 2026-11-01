@@ -11,6 +11,13 @@ const MODULES = ["messages", "work", "forms"] as const;
 const UPGRADES: ((db: DatabaseSync) => void)[] = [
   // 0.5: Messages link no Work.
   (db) => db.exec("UPDATE messages SET data=json_remove(data,'$.workID')"),
+  // 0.5: Work has links, and accepted Work was completed when its review accepted it.
+  (db) =>
+    db.exec(`
+      UPDATE work SET data=json_set(data,'$.links',json('[]'));
+      UPDATE work SET data=json_set(data,'$.completedAt',json_extract(data,'$.review.at'))
+        WHERE json_extract(data,'$.status')='accepted';
+    `),
 ];
 
 /** One SQLite database; module tables and their history are committed together. */

@@ -12,7 +12,7 @@ try {
   const work = createWork(actors, store);
   const messages = createMessages(actors, store);
   const forms = createForms(actors, store);
-  const ticket = work.create({ goal: "Review the public client composition", ownerID: "owner" });
+  const ticket = work.create({ title: "Review the public client composition", ownerID: "owner" });
   messages.send({ recipientID: "owner", text: `Please inspect ticket ${ticket.ticketID}.` });
   forms.create({
     respondentIDs: ["owner"],

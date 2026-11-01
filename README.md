@@ -64,6 +64,8 @@ function workspace(authority: ActorAuthority, admittedActorID: string, databaseP
 
 Lists return `{items, next, actors}`: the page, an opaque position for the next page (null at the end) and the names of the Actors it mentions. Work and Form lists filter by status lists, one or several requesters, `updatedSince` and canonical subtrees (`ownerWithin`, `requesterWithin`, `respondentWithin`, `awaitingWithin`), and go newest first with `order: "recent"`. Records carry `updatedAt`; history comes only from `work_get`/`form_get` with `history: true`. See [lists](docs/contracts.md#lists).
 
+Work is the unit of progress: a title, progress, links and what it waits on, owned and requested by the caller unless it names another owner. Work an Actor requested itself completes when it submits; other Work waits for its requester's review. See [Work](docs/contracts.md#work).
+
 Each Message belongs to its pair's conversation (`conversationID`) and carries its place in the one Message order (`seq`). `messages.list({counterpartyID, before:"latest", limit:20})` returns a conversation's newest window ascending, with `older` for the page before it; `messages.list({direction:"incoming", after})` reads an Actor's input across conversations, from a `next` position or the last `seq` it handled. See [Messages](docs/contracts.md#messages).
 
 See [design and accepted graphs](docs/design.md), [contracts and transitions](docs/contracts.md), and [the explicit composition example](examples/consumer.ts). Tests cover requester/owner role swaps, database reopen, history/cursors, authorization, revisions, exact-submission review, SDK calls, stdio process restart, and an external TypeScript consumer importing only package exports.
