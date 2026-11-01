@@ -30,6 +30,8 @@ const executionNames = [
   "form_list",
   "form_respond",
   "form_close",
+  "status_set",
+  "status_get",
 ];
 const viewerNames = [
   "actor_get",
@@ -40,6 +42,7 @@ const viewerNames = [
   "work_list",
   "form_get",
   "form_list",
+  "status_get",
 ];
 
 async function call<T>(
@@ -60,7 +63,7 @@ async function refused(client: Client, name: string, args: Record<string, unknow
   assert.equal(JSON.parse(errorText).code, code);
 }
 
-test("SDK execution/viewer discovery and all 16 calls share records and enforce domain authority", async (t) => {
+test("SDK execution/viewer discovery and all 18 calls share records and enforce domain authority", async (t) => {
   const store = openSqlite(":memory:");
   const { authority } = fixtureAuthority();
   const connections: { client: Client; server: ReturnType<typeof createMcpServer> }[] = [];
@@ -127,42 +130,42 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
     for (const client of [owner, viewer])
       await refused(client, removed, { messageID: message.messageID }, "not_found");
   const form = await call<Form>(requester, "form_create", {
-    respondentIDs: ["owner"],
+    title: "Proceed?",
+    collect: true,
     fields: [{ name: "answer", label: "Proceed?", required: true }],
   });
   assert.equal(
     (
       await call<List<Form>>(outsider, "form_list", {
         requesterWithin: "requester",
-        respondentWithin: "owner",
-        awaitingWithin: "owner",
+        status: ["open"],
       })
     ).items[0]?.formID,
     form.formID,
   );
   await call(owner, "form_respond", {
     formID: form.formID,
-    expectedRevision: 1,
     answers: { answer: "yes" },
+    note: "Over MCP",
   });
   const changed = await call<Form>(viewer, "form_get", { formID: form.formID });
-  assert.equal(changed.responses.owner?.answer, "yes");
+  assert.deepEqual(changed.responses.owner?.answers, { answer: "yes" });
+  assert.equal(changed.responses.owner?.note, "Over MCP");
   assert.equal((await call<List<Form>>(viewer, "form_list")).items.length, 1);
   assert.equal(Object.hasOwn(form, "workID"), false);
-  assert.deepEqual(
-    (await call<List<Form>>(outsider, "form_list", { awaitingWithin: "outsider" })).items,
-    [],
-  );
   await refused(outsider, "work_list", { ownerWithin: 42 }, "invalid_input");
   const formProperties = tools.find((tool) => tool.name === "form_create")?.inputSchema;
   assert.ok(formProperties);
-  assert.equal(formProperties.required?.includes("workID"), false);
+  assert.deepEqual(formProperties.required, ["title", "fields"]);
   await call(requester, "form_close", {
     formID: form.formID,
     expectedRevision: changed.revision,
     status: "resolved",
     resolution: "Answers recorded",
   });
+  const status = await call(owner, "status_set", { line: "Answering over MCP" });
+  assert.deepEqual(await call(viewer, "status_get", { actorID: "owner" }), status);
+  await refused(viewer, "status_set", { line: "Viewer write" }, "forbidden");
   const update = await call<Work>(owner, "work_update", {
     ticketID: ticket.ticketID,
     expectedRevision: 1,
@@ -212,24 +215,18 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   assert.equal(
     (
       await call<List<Form>>(outsider, "form_list", {
-        requesterID: "requester",
-        respondentID: "owner",
+        requesterID: ["requester"],
         requesterWithin: "requester",
-        respondentWithin: "owner",
         status: ["resolved"],
       })
     ).items.length,
     1,
   );
-  assert.deepEqual(
-    (await call<List<Form>>(outsider, "form_list", { awaitingActorID: "owner" })).items,
-    [],
-  );
   await refused(
     outsider,
     "form_respond",
-    { formID: form.formID, expectedRevision: changed.revision, answers: { answer: "yes" } },
-    "forbidden",
+    { formID: form.formID, answers: { answer: "yes" } },
+    "conflict",
   );
   await refused(outsider, "message_get", { messageID: message.messageID }, "not_found");
   await refused(
@@ -342,7 +339,7 @@ for (const purpose of ["execution", "viewer"] as const) {
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(a);
     await client.connect(b);
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 16 : 8);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 9);
     failing = true;
     await assert.rejects(
       () => client.listTools(),
@@ -363,7 +360,7 @@ for (const purpose of ["execution", "viewer"] as const) {
     assert.equal(callError.isError, true);
     assert.equal(JSON.stringify(callError).includes(sentinel), false);
     failing = false;
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 16 : 8);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 9);
     const actor = fixture.rows.get("requester");
     assert.ok(actor);
     fixture.rows.set("requester", { ...actor, state: "closed" });
@@ -416,7 +413,7 @@ test("npm start target serves SDK stdio across independent processes and durable
     id = ticket.ticketID;
   });
   await session("viewer", async (client) => {
-    assert.equal((await client.listTools()).tools.length, 8);
+    assert.equal((await client.listTools()).tools.length, 9);
     assert.equal(
       (await call<Work>(client, "work_get", { ticketID: id })).title,
       "Reopen stdio database",

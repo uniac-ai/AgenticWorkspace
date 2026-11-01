@@ -1,39 +1,42 @@
 # Operations, roles and transitions
 
-Runtime request/record schemas and derived TypeScript types are maintained in [src/contracts](../src/contracts/index.ts). Requests are strict objects: extra fields, including caller identity fields, are rejected. IDs/text are trimmed and bounded. The admitted caller comes from trusted client construction. All clients require an active caller on every operation, including reads. Directory visibility is owned by canonical Actor authority. Work and Forms are shared within the admitted Hub organization; Messages is private to its parties. Record roles determine write permissions.
+Runtime request/record schemas and derived TypeScript types are maintained in [src/contracts](../src/contracts/index.ts). Requests are strict objects: extra fields, including caller identity fields, are rejected. IDs/text are trimmed and bounded. The admitted caller comes from trusted client construction. All clients require an active caller on every operation, including reads. Directory visibility is owned by canonical Actor authority. Work, Forms and Status are shared within the admitted Hub organization; Messages is private to its parties. Record roles determine write permissions.
 
 ## Tool inventory
 
-Every successful write returns the resulting record: its stable ID, `revision` and `updatedAt`, the time of the write that produced the current revision. History comes only from `work_get` and `form_get` with `history: true`. Execution MCP exposes every row below. Viewer MCP exposes only reads. Actor lifecycle administration is outside this inventory.
+Every successful write returns the resulting record: its stable ID, `revision` and `updatedAt`, the time of the write that produced the current revision. History comes only from `work_get`, `form_get` and `status_get` with `history: true`. Execution MCP exposes every row below. Viewer MCP exposes only reads. Actor lifecycle administration is outside this inventory.
 
 Each contract carries `level`, the smallest organization level that presents it. Report is one agent and its person; Team adds working with other Actors; Organization adds the lifecycle and the system, none of which is in this package. Each level contains the one before it. The tag selects what a client presents; it grants and refuses nothing.
 
-| Tool         | Level  | Input                                                                                                                                                                       | Purpose                                                |
-| ------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| actor_get    | Team   | `{actorID?}`                                                                                                                                                                | Read self by default or a visible Actor                |
-| actor_list   | Team   | `{after?,limit?}`                                                                                                                                                           | Read canonical visible directory                       |
-| message_send | Team   | `{recipientID,text}`                                                                                                                                                        | Send into the pair's conversation                      |
-| message_get  | Team   | `{messageID}`                                                                                                                                                               | Read one message as a party                            |
-| message_list | Team   | `{direction?:incoming\|outgoing\|all,counterpartyID?,before?:latest\|older,after?:next\|seq,limit?}`                                                                        | Read a conversation or the caller's input              |
-| work_create  | Report | `{title,goal?,ownerID?,links?,waitsOn?}`                                                                                                                                    | Create Work; caller requests it and owns it by default |
-| work_get     | Report | `{ticketID,history?}`                                                                                                                                                       | Read a ticket, including accepted work                 |
-| work_list    | Report | `{ownerID?,requesterID?:id\|id[],waitsOnActorID?,ownerWithin?,requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}`                                    | Read matching shared tickets                           |
-| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|blocked,links?,waitsOn?}`                                                                | Update at least one allowed field                      |
-| work_submit  | Report | `{ticketID,expectedRevision?,result,evidence?}`                                                                                                                             | Submit; self-requested Work completes                  |
-| work_review  | Team   | `{ticketID,expectedRevision?,submissionID,verdict:accepted\|changes_requested,comment?}`                                                                                    | Review the exact current submission                    |
-| form_create  | Report | `{workID?,respondentIDs[],fields:[{name,label,required,options?}]}`                                                                                                         | Create independent or work-linked interaction          |
-| form_get     | Report | `{formID,history?}`                                                                                                                                                         | Read a form                                            |
-| form_list    | Report | `{workID?,requesterID?:id\|id[],respondentID?,status?:[...],awaitingActorID?,requesterWithin?,respondentWithin?,awaitingWithin?,updatedSince?,order?:recent,after?,limit?}` | Read matching shared forms                             |
-| form_respond | Team   | `{formID,expectedRevision,answers:{field:value}}`                                                                                                                           | Add/revise designated respondent's answers             |
-| form_close   | Report | `{formID,expectedRevision,status:resolved\|cancelled,resolution}`                                                                                                           | Persist form resolution/cancellation                   |
+| Tool         | Level  | Input                                                                                                                                    | Purpose                                                |
+| ------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| actor_get    | Team   | `{actorID?}`                                                                                                                             | Read self by default or a visible Actor                |
+| actor_list   | Team   | `{after?,limit?}`                                                                                                                        | Read canonical visible directory                       |
+| message_send | Team   | `{recipientID,text}`                                                                                                                     | Send into the pair's conversation                      |
+| message_get  | Team   | `{messageID}`                                                                                                                            | Read one message as a party                            |
+| message_list | Team   | `{direction?:incoming\|outgoing\|all,counterpartyID?,before?:latest\|older,after?:next\|seq,limit?}`                                     | Read a conversation or the caller's input              |
+| work_create  | Report | `{title,goal?,ownerID?,links?,waitsOn?}`                                                                                                 | Create Work; caller requests it and owns it by default |
+| work_get     | Report | `{ticketID,history?}`                                                                                                                    | Read a ticket, including accepted work                 |
+| work_list    | Report | `{ownerID?,requesterID?:id\|id[],waitsOnActorID?,ownerWithin?,requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}` | Read matching shared tickets                           |
+| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|blocked,links?,waitsOn?}`                             | Update at least one allowed field                      |
+| work_submit  | Report | `{ticketID,expectedRevision?,result,evidence?}`                                                                                          | Submit; self-requested Work completes                  |
+| work_review  | Team   | `{ticketID,expectedRevision?,submissionID,verdict:accepted\|changes_requested,comment?}`                                                 | Review the exact current submission                    |
+| form_create  | Report | `{title,context?,links?,workID?,cause?,approval?,collect?,fields:[{name,label,required,options?:[{value,detail?}],recommended?}]}`       | Ask                                                    |
+| form_get     | Report | `{formID,history?}`                                                                                                                      | Read an ask                                            |
+| form_list    | Report | `{workID?,requesterID?:id\|id[],requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}`                               | Read matching shared asks                              |
+| form_respond | Team   | `{formID,expectedRevision?,answers:{field:value},note?}`                                                                                 | Answer an open ask                                     |
+| form_close   | Report | `{formID,expectedRevision,status:resolved\|cancelled,resolution}`                                                                        | The asker resolves or cancels its ask                  |
+| status_set   | Report | `{line?,summary?,links?}`                                                                                                                | Set the caller's status                                |
+| status_get   | Report | `{actorID?,history?}`                                                                                                                    | Read an Actor's status, the caller's by default        |
 
-Form answers are strings. Every response supplies a complete answer set: required fields must be nonblank, supplied field names must exist, and supplied choice answers must match an option. Revisions retain earlier answer sets. Field names, options and respondent IDs are unique. A one-field form is a question.
+A Form is an ask; the tools keep the `form_*` names.
 
 ## Authority
 
 - Messages are private to sender and recipient and expose only send/get/list. A reply is another message in the same conversation. Messages have no read, delivery or handling state, and reading changes nothing. The recipient must be active when the message is sent.
 - Every active admitted Actor may get/list all organization Work, including history and accepted tickets. The requester edits goal and owner and reviews. The current owner edits title, progress, status, links and waitsOn, and submits. Reassignment changes write roles and filter membership; it does not remove shared read access. New owner must be active.
-- Every active admitted Actor may get/list all organization Forms and history, standalone or linked. Any active caller may create a Form for active visible respondents. Optional `workID` must identify existing shared Work at creation. Without `workID`, Forms never consult Work; Form reads never consult Work. Only designated respondents answer while open; only form requester closes. Responding/closing never mutates Work. Closure does not require every respondent to have answered. Active callers retain shared history reads when counterparties close.
+- Every active admitted Actor may get/list all organization asks and history, and may ask. Any active Actor may answer an open ask, except an approval, which only the asker's managers answer. Only the asker closes its ask. Answering and closing never change Work, and Form reads never consult Work. Active callers retain shared history reads when counterparties close.
+- Every active admitted Actor may read any Actor's status. Only the Actor itself sets it.
 
 The host composes canonical Actor authority and a WorkspaceStore for one Hub organization. Public read does not construct an elevated identity or alter directory visibility. List criteria do not select the caller or grant write authority.
 
@@ -47,13 +50,11 @@ The page `limit` defaults to 50 and is at most 100. It bounds the returned rows,
 
 ### Filters
 
-Work accepts `ownerID`, `requesterID`, `waitsOnActorID`, `status`, `ownerWithin`, `requesterWithin` and `updatedSince`. Forms accepts `workID`, `requesterID`, `respondentID`, `status`, `awaitingActorID`, `requesterWithin`, `respondentWithin`, `awaitingWithin` and `updatedSince`. All supplied filters intersect. `requesterID` takes one ID or a list, matching any of them; `status` takes a list of the module's status values, matching any of them. ID filters use exact equality; `waitsOnActorID` matches Work waiting on that Actor; respondent filters test designated membership. Filter IDs do not trigger Actor lookup; unknown IDs yield empty matching sets. Omit filters to list all shared records.
-
-`awaitingActorID` selects only open Forms that designate that Actor and have no own response entry for them. A recorded empty answer object counts as a response; closed Forms never await anyone. It may be combined with another respondent filter.
+Work accepts `ownerID`, `requesterID`, `waitsOnActorID`, `status`, `ownerWithin`, `requesterWithin` and `updatedSince`. Forms accepts `workID`, `requesterID`, `status`, `requesterWithin` and `updatedSince`. All supplied filters intersect. `requesterID` takes one ID or a list, matching any of them; `status` takes a list of the module's status values, matching any of them. ID filters use exact equality; `waitsOnActorID` matches Work waiting on that Actor. Filter IDs do not trigger Actor lookup; unknown IDs yield empty matching sets. Omit filters to list all shared records.
 
 Subtree criteria use the required host `ActorAuthority.within(callerID, actorID, ancestorID)`, which tests the named canonical position and every descendant through retained relationships, including closed Actors and closed anchors without a depth limit. Unknown members or anchors return false. Bound `ActorsClient.within(actorID, ancestorID)` revalidates the admitted caller and delegates membership without selected-profile lookup or caller substitution.
 
-`ownerWithin` tests current Work ownership; `requesterWithin` tests immutable record requester, the scope from which it originated. Neither implies causal ticket lineage. `respondentWithin` selects any designated respondent in the subtree. `awaitingWithin` selects any designated respondent in the subtree with no own response entry, only while the Form is open. Members OR within each existential predicate; separate respondent and awaiting predicates may match different respondents. Any active caller may query any branch; membership grants no write role or Message access.
+`ownerWithin` tests current Work ownership; `requesterWithin` tests immutable record requester, the scope from which it originated. Neither implies causal ticket lineage. Any active caller may query any branch; membership grants no write role or Message access.
 
 ## Messages
 
@@ -83,7 +84,25 @@ Work is the unit of progress. A Work record holds:
 
 New Work is `open`. In `open`, `active`, `blocked` or `changes_requested`, the owner may edit its fields and set `open`, `active` or `blocked`, and the requester may edit goal and owner. `work_submit` records a new submission. On Work its owner requested itself it completes at once: `accepted`, with `completedAt` and no review. Other Work enters `submitted` and is frozen until the requester reviews the exact current submission. Accepting needs no comment, sets `completedAt` and is terminal; requesting changes needs a comment and returns the Work to its owner. Follow-up work gets a new ticket.
 
-`expectedRevision` is optional on the owner's writes (edits and submit), which no one else makes, and on a review, which the `submissionID` pins. Goal and owner edits, and every Form response and closure, require it. The state, role and revision checks and the snapshot/history writes share one SQLite transaction; a stale revision or a noncurrent submission conflicts. Resubmission retains prior evidence and reviews in history.
+`expectedRevision` is optional on the owner's writes (edits and submit), which no one else makes, and on a review, which the `submissionID` pins. Goal and owner edits require it. The state, role and revision checks and the snapshot/history writes share one SQLite transaction; a stale revision or a noncurrent submission conflicts. Resubmission retains prior evidence and reviews in history.
+
+## Asks
+
+An ask is its asker's own output: it names no one to answer it. It holds:
+- `title` (at most 120 characters), optional `context` and `links`;
+- `fields`: each has a `name`, a `label` and `required`, and may have `options`, each `{value, detail?}`, and the asker's `recommended` value among them. A one-field ask with options is a decision; without options, a question;
+- optional `workID`, the existing shared Work it blocks, and `cause`, the existing ask of a report that this ask carries up;
+- `approval` and `collect`, both false by default.
+
+Any active Actor may answer an open ask with `form_respond`: a complete answer set, where required fields are nonblank, every named field exists and a choice matches an option, and an optional `note`. The response is recorded under its responder with the time it was given; a responder that answers again replaces its own response, and history keeps every earlier one. The first answer resolves the ask. An ask with `collect` stays open for more answers until its asker closes it. `expectedRevision` is optional on an answer: an answer to a resolved ask conflicts, and answers to a collecting ask don't overwrite each other.
+
+An `approval` ask authorizes something that can't be undone, so only the asker's strict ancestors answer it: its managers up to the root, never the asker itself. The Workspace tests this with the host's `within` relation, so it needs no root identity. The root's own approvals have no one above to answer them; the asker closes them, as it does to record an answer its person gave in its session.
+
+The asker closes its open ask with `form_close`, with `expectedRevision`, as `resolved` with a `resolution` (ending a collection, or recording an answer given elsewhere) or `cancelled`. A closed ask doesn't change again.
+
+## Status
+
+Each Actor has one status, replaced in place: an optional `line` (at most 160 characters), an optional `summary` (at most 1,200) and `links`. It holds no state: an Actor's state is derived from its Work and asks. `status_set` changes the fields it names and keeps the others; only the Actor itself sets it. `status_get` reads any Actor's status, the caller's by default, and is `not_found` until the Actor first sets one.
 
 ## Errors and protocol
 

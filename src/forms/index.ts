@@ -1,6 +1,6 @@
-/** Structured interactions with optional work context, responses and resolution. */
+/** Asks: the asker's own output, answered by any Actor and resolved by the first answer. */
 import { randomUUID } from "node:crypto";
-import { type ActorsClient, activeActor } from "../actors/index.js";
+import type { ActorsClient } from "../actors/index.js";
 import {
   type Form,
   FormContracts,
@@ -34,36 +34,40 @@ export function createForms(
         requireThat(work, "invalid_input", "work references require a Work client");
         work.get({ ticketID: request.workID });
       }
-      requireThat(
-        new Set(request.respondentIDs).size === request.respondentIDs.length,
-        "invalid_input",
-        "respondents must be unique",
-      );
+      if (request.cause !== undefined) recorded(table, request.cause);
       requireThat(
         new Set(request.fields.map((field) => field.name)).size === request.fields.length,
         "invalid_input",
         "field names must be unique",
       );
-      for (const field of request.fields)
+      for (const field of request.fields) {
+        const values = field.options?.map((option) => option.value);
         requireThat(
-          field.options === undefined || new Set(field.options).size === field.options.length,
+          values === undefined || new Set(values).size === values.length,
           "invalid_input",
           "field options must be unique",
         );
-      for (const id of request.respondentIDs) activeActor(actors, id);
+        requireThat(
+          field.recommended === undefined || values?.includes(field.recommended),
+          "invalid_input",
+          "recommended must be one of the field's options",
+        );
+      }
       return store.transaction(() => {
         const at = now();
         const formID = randomUUID();
+        const { links = [], ...ask } = request;
         return published(
           table.save(
             formID,
             {
               formID,
               requesterID: caller,
-              ...request,
+              ...ask,
+              links,
               status: "open",
-              responses: {},
               createdAt: at,
+              responses: {},
             },
             { actorID: caller, at, action: "created", detail: request },
           ),
@@ -77,7 +81,6 @@ export function createForms(
     },
     list(input = {}) {
       const query = parse(FormContracts.form_list.input, input);
-      const { respondentWithin, awaitingWithin } = query;
       actors.get();
       const { after: _after, limit: _limit, ...filter } = query;
       const requesters = query.requesterID === undefined ? undefined : [query.requesterID].flat();
@@ -89,23 +92,11 @@ export function createForms(
         (row) =>
           (query.workID === undefined || row.workID === query.workID) &&
           (requesters === undefined || requesters.includes(row.requesterID)) &&
-          (query.respondentID === undefined || row.respondentIDs.includes(query.respondentID)) &&
           (query.requesterWithin === undefined ||
             actors.within(row.requesterID, query.requesterWithin)) &&
-          (respondentWithin === undefined ||
-            row.respondentIDs.some((id) => actors.within(id, respondentWithin))) &&
           (query.status === undefined || query.status.includes(row.status)) &&
-          (query.updatedSince === undefined || row.updatedAt >= query.updatedSince) &&
-          (query.awaitingActorID === undefined ||
-            (row.status === "open" &&
-              row.respondentIDs.includes(query.awaitingActorID) &&
-              !Object.hasOwn(row.responses, query.awaitingActorID))) &&
-          (awaitingWithin === undefined ||
-            (row.status === "open" &&
-              row.respondentIDs.some(
-                (id) => actors.within(id, awaitingWithin) && !Object.hasOwn(row.responses, id),
-              ))),
-        (row) => [row.requesterID, ...row.respondentIDs, ...Object.keys(row.responses)],
+          (query.updatedSince === undefined || row.updatedAt >= query.updatedSince),
+        (row) => [row.requesterID, ...Object.keys(row.responses)],
       );
     },
     respond(input) {
@@ -113,12 +104,12 @@ export function createForms(
       const caller = actors.get().actorID;
       return store.transaction(() => {
         const row = recorded(table, request.formID);
-        requireThat(
-          row.respondentIDs.includes(caller),
-          "forbidden",
-          "only a designated respondent answers",
-        );
         requireThat(row.status === "open", "conflict", "form is closed");
+        requireThat(
+          !row.approval || (caller !== row.requesterID && actors.within(row.requesterID, caller)),
+          "forbidden",
+          "only the asker's managers answer an approval",
+        );
         for (const name of Object.keys(request.answers))
           requireThat(
             row.fields.some((field) => field.name === name),
@@ -135,22 +126,26 @@ export function createForms(
             "required answer is missing",
           );
           requireThat(
-            answer === undefined || field.options === undefined || field.options.includes(answer),
+            answer === undefined ||
+              field.options === undefined ||
+              field.options.some((option) => option.value === answer),
             "invalid_input",
             "answer is outside field options",
           );
         }
+        const at = now();
+        const { formID: _formID, expectedRevision, ...answer } = request;
+        const response = { ...answer, at };
         return published(
           table.save(
             row.formID,
-            { ...stateOf(row), responses: { ...row.responses, [caller]: request.answers } },
             {
-              actorID: caller,
-              at: now(),
-              action: "responded",
-              detail: { answers: request.answers },
+              ...stateOf(row),
+              status: row.collect ? "open" : "resolved",
+              responses: { ...row.responses, [caller]: response },
             },
-            request.expectedRevision,
+            { actorID: caller, at, action: "responded", detail: answer },
+            expectedRevision ?? row.revision,
           ),
         );
       });

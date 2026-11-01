@@ -1,4 +1,4 @@
-/** Execution and viewer MCP servers over the same four domain clients. SDK owns transport. */
+/** Execution and viewer MCP servers over the same domain clients. SDK owns transport. */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -13,6 +13,7 @@ import {
   MessageContracts,
   parse,
   requireThat,
+  StatusContracts,
   WorkContracts,
   WorkspaceError,
 } from "../contracts/index.js";
@@ -31,7 +32,7 @@ function bind<S extends z.ZodType>(
   return { ...spec, run: (input: unknown) => parse(spec.output, run(parse(spec.input, input))) };
 }
 export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose): Server {
-  const { actors, messages, work, forms } = clients;
+  const { actors, messages, work, forms, status } = clients;
   const operations = {
     actor_get: bind(ActorContracts.actor_get, (input) => actors.get(input)),
     actor_list: bind(ActorContracts.actor_list, (input) => actors.list(input)),
@@ -49,9 +50,11 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
     form_list: bind(FormContracts.form_list, (input) => forms.list(input)),
     form_respond: bind(FormContracts.form_respond, (input) => forms.respond(input)),
     form_close: bind(FormContracts.form_close, (input) => forms.close(input)),
+    status_set: bind(StatusContracts.status_set, (input) => status.set(input)),
+    status_get: bind(StatusContracts.status_get, (input) => status.get(input)),
   };
   const server = new Server(
-    { name: `agentic-workspace-${purpose}`, version: "0.4.0" },
+    { name: `agentic-workspace-${purpose}`, version: "0.5.0" },
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => {

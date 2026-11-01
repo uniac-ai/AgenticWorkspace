@@ -34,6 +34,8 @@ export const Link = z.strictObject({
   url: z.url({ protocol: /^https?$/ }).max(2000),
 });
 export const Links = z.array(Link).max(50);
+/** A heading: a Work's or an ask's title. */
+export const Title = z.string().trim().min(1).max(120);
 export type HistoryEntry = z.infer<typeof History>;
 export interface Page<T> {
   items: T[];

@@ -3,43 +3,63 @@ import {
   contract,
   ID,
   Limit,
+  Links,
   listOf,
   Metadata,
   Next,
   OneOrMany,
   Revision,
   Text,
+  Title,
 } from "./common.js";
 
+export const Option = z.strictObject({ value: Text, detail: Text.optional() });
+/** A field with options is a choice; recommended names the asker's choice among them. */
 export const Field = z.strictObject({
   name: ID,
   label: Text,
   required: z.boolean(),
-  options: z.array(Text).min(1).max(100).optional(),
+  options: z.array(Option).min(1).max(100).optional(),
+  recommended: Text.optional(),
 });
+export const Response = z.strictObject({
+  answers: z.record(z.string(), z.string().max(20000)),
+  note: Text.optional(),
+  at: z.iso.datetime(),
+});
+/** An ask: the asker's own output, open to any responder except where approval limits it. */
 export const FormState = z.strictObject({
   formID: ID,
-  workID: ID.optional(),
   requesterID: ID,
-  respondentIDs: z.array(ID).min(1).max(100),
+  title: Title,
+  context: Text.optional(),
+  links: Links,
+  workID: ID.optional(),
+  cause: ID.optional(),
+  approval: z.boolean(),
+  collect: z.boolean(),
   fields: z.array(Field).min(1).max(100),
   status: z.enum(["open", "resolved", "cancelled"]),
   createdAt: z.iso.datetime(),
-  responses: z.record(z.string(), z.record(z.string(), z.string())),
+  responses: z.record(ID, Response),
   resolution: z.strictObject({ text: Text, at: z.iso.datetime() }).optional(),
 });
 export const Form = FormState.extend(Metadata);
 export type Form = z.infer<typeof Form>;
 export type FormState = z.infer<typeof FormState>;
 const formID = z.strictObject({ formID: ID });
-const mutation = formID.extend({ expectedRevision: Revision });
 export const FormContracts = {
   form_create: contract(
     "report",
-    "Create a form, optionally linked to readable work; one field is a question.",
+    "Ask: a title, context, links and fields; optionally the Work it blocks, the report's ask it carries up (cause), approval or collect.",
     z.strictObject({
+      title: Title,
+      context: Text.optional(),
+      links: Links.optional(),
       workID: ID.optional(),
-      respondentIDs: z.array(ID).min(1).max(100),
+      cause: ID.optional(),
+      approval: z.boolean().default(false),
+      collect: z.boolean().default(false),
       fields: z.array(Field).min(1).max(100),
     }),
     Form,
@@ -47,22 +67,18 @@ export const FormContracts = {
   ),
   form_get: contract(
     "report",
-    "Read a shared organization form; history only when asked.",
+    "Read a shared organization ask; history only when asked.",
     formID.extend({ history: z.boolean().default(false) }),
     Form,
   ),
   form_list: contract(
     "report",
-    "List shared forms matching every filter, by update order or most recent first; awaiting requires an open designated respondent without a response entry.",
+    "List shared asks matching every filter, by update order or most recent first.",
     z.strictObject({
       workID: ID.optional(),
       requesterID: OneOrMany.optional(),
-      respondentID: ID.optional(),
-      status: z.array(FormState.shape.status).min(1).optional(),
-      awaitingActorID: ID.optional(),
       requesterWithin: ID.optional(),
-      respondentWithin: ID.optional(),
-      awaitingWithin: ID.optional(),
+      status: z.array(FormState.shape.status).min(1).optional(),
       updatedSince: z.iso.datetime().optional(),
       order: z.literal("recent").optional(),
       after: Next.optional(),
@@ -72,15 +88,23 @@ export const FormContracts = {
   ),
   form_respond: contract(
     "team",
-    "Designated respondent adds or revises a complete answer while open, retaining prior responses.",
-    mutation.extend({ answers: z.record(z.string(), z.string().max(20000)) }),
+    "Answer an open ask completely, with an optional note; the first answer resolves it unless it collects. Only the asker's managers answer an approval.",
+    formID.extend({
+      answers: z.record(z.string(), z.string().max(20000)),
+      note: Text.optional(),
+      expectedRevision: Revision.optional(),
+    }),
     Form,
     true,
   ),
   form_close: contract(
     "report",
-    "Form requester records resolution/cancellation; work lifecycle is unchanged.",
-    mutation.extend({ status: z.enum(["resolved", "cancelled"]), resolution: Text }),
+    "The asker resolves or cancels its open ask, recording why; Work is unchanged.",
+    formID.extend({
+      expectedRevision: Revision,
+      status: z.enum(["resolved", "cancelled"]),
+      resolution: Text,
+    }),
     Form,
     true,
   ),
