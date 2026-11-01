@@ -3,10 +3,17 @@ import { z } from "zod";
 export const ID = z.string().trim().min(1).max(200);
 export const Text = z.string().trim().min(1).max(20000);
 export const Revision = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+/** The smallest organization level that presents a contract; each level contains the one before. */
+export const Level = z.enum(["report", "team", "organization"]);
+export type Level = z.infer<typeof Level>;
+export const Limit = z.number().int().min(1).max(100).default(50);
+/** Directory pages keep the canonical authority's numeric position. */
 export const ListInput = z.strictObject({
   after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
-  limit: z.number().int().min(1).max(100).default(50),
+  limit: Limit,
 });
+/** An opaque list position; it continues only the read and filter that issued it. */
+export const Next = z.string().trim().min(1).max(1000);
 export const History = z.strictObject({
   revision: Revision,
   cursor: Revision,
@@ -15,11 +22,22 @@ export const History = z.strictObject({
   action: Text,
   detail: z.record(z.string(), z.unknown()),
 });
-export const Metadata = { revision: Revision, cursor: Revision, history: z.array(History) };
+/** History is present only when a get asks for it. */
+export const Metadata = {
+  revision: Revision,
+  updatedAt: z.iso.datetime(),
+  history: z.array(History).optional(),
+};
+export const Actors = z.record(ID, z.strictObject({ name: Text }));
 export type HistoryEntry = z.infer<typeof History>;
 export interface Page<T> {
   items: T[];
   after: number;
+}
+export interface List<T> {
+  items: T[];
+  next: string | null;
+  actors: z.infer<typeof Actors>;
 }
 export type Input<S extends z.ZodType> = z.input<S>;
 
@@ -45,12 +63,17 @@ export function requireThat(
   if (!condition) throw new WorkspaceError(code, message);
 }
 export function contract<S extends z.ZodType>(
+  level: Level,
   description: string,
   input: S,
   output: z.ZodType,
   writes = false,
 ) {
-  return { description, input, output, writes };
+  return { level, description, input, output, writes };
 }
 export const pageOf = (record: z.ZodType) =>
   z.strictObject({ items: z.array(record), after: ListInput.shape.after });
+export const listOf = (record: z.ZodType) =>
+  z.strictObject({ items: z.array(record), next: Next.nullable(), actors: Actors });
+/** One ID or several, matching any of them. */
+export const OneOrMany = z.union([ID, z.array(ID).min(1).max(100)]);

@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { contract, ID, ListInput, Metadata, pageOf, Revision, Text } from "./common.js";
+import {
+  contract,
+  ID,
+  Limit,
+  listOf,
+  Metadata,
+  Next,
+  OneOrMany,
+  Revision,
+  Text,
+} from "./common.js";
 
 export const Field = z.strictObject({
   name: ID,
@@ -25,6 +35,7 @@ const formID = z.strictObject({ formID: ID });
 const mutation = formID.extend({ expectedRevision: Revision });
 export const FormContracts = {
   form_create: contract(
+    "report",
     "Create a form, optionally linked to readable work; one field is a question.",
     z.strictObject({
       workID: ID.optional(),
@@ -34,28 +45,40 @@ export const FormContracts = {
     Form,
     true,
   ),
-  form_get: contract("Read a shared organization form and retained history.", formID, Form),
+  form_get: contract(
+    "report",
+    "Read a shared organization form; history only when asked.",
+    formID.extend({ history: z.boolean().default(false) }),
+    Form,
+  ),
   form_list: contract(
-    "Traverse shared form upserts matching every exact, status and inclusive subtree filter; awaiting requires an open designated respondent without a response entry.",
-    ListInput.extend({
+    "report",
+    "List shared forms matching every filter, by update order or most recent first; awaiting requires an open designated respondent without a response entry.",
+    z.strictObject({
       workID: ID.optional(),
-      requesterID: ID.optional(),
+      requesterID: OneOrMany.optional(),
       respondentID: ID.optional(),
-      status: FormState.shape.status.optional(),
+      status: z.array(FormState.shape.status).min(1).optional(),
       awaitingActorID: ID.optional(),
       requesterWithin: ID.optional(),
       respondentWithin: ID.optional(),
       awaitingWithin: ID.optional(),
+      updatedSince: z.iso.datetime().optional(),
+      order: z.literal("recent").optional(),
+      after: Next.optional(),
+      limit: Limit,
     }),
-    pageOf(Form),
+    listOf(Form),
   ),
   form_respond: contract(
+    "team",
     "Designated respondent adds or revises a complete answer while open, retaining prior responses.",
     mutation.extend({ answers: z.record(z.string(), z.string().max(20000)) }),
     Form,
     true,
   ),
   form_close: contract(
+    "report",
     "Form requester records resolution/cancellation; work lifecycle is unchanged.",
     mutation.extend({ status: z.enum(["resolved", "cancelled"]), resolution: Text }),
     Form,

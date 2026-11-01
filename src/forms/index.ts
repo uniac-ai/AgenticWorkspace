@@ -4,20 +4,19 @@ import { type ActorsClient, activeActor } from "../actors/index.js";
 import {
   type Form,
   FormContracts,
-  type FormState,
   type Input,
-  type Page,
+  type List,
   parse,
   requireThat,
 } from "../contracts/index.js";
 import type { WorkspaceStore } from "../persistence/index.js";
-import { now, recorded, traverse } from "../records.js";
+import { now, published, recorded, stateOf, traverse } from "../records.js";
 import type { WorkReader } from "../work/index.js";
 
 export interface FormsClient {
   create(input: Input<typeof FormContracts.form_create.input>): Form;
   get(input: Input<typeof FormContracts.form_get.input>): Form;
-  list(input?: Input<typeof FormContracts.form_list.input>): Page<Form>;
+  list(input?: Input<typeof FormContracts.form_list.input>): List<Form>;
   respond(input: Input<typeof FormContracts.form_respond.input>): Form;
   close(input: Input<typeof FormContracts.form_close.input>): Form;
 }
@@ -27,10 +26,6 @@ export function createForms(
   work?: WorkReader,
 ): FormsClient {
   const table = store.forms;
-  const state = (row: Form): FormState => {
-    const { revision: _revision, cursor: _cursor, history: _history, ...data } = row;
-    return data;
-  };
   return {
     create(input) {
       const request = parse(FormContracts.form_create.input, input);
@@ -59,34 +54,48 @@ export function createForms(
       return store.transaction(() => {
         const at = now();
         const formID = randomUUID();
-        return table.save(
-          formID,
-          { formID, requesterID: caller, ...request, status: "open", responses: {}, createdAt: at },
-          { actorID: caller, at, action: "created", detail: request },
+        return published(
+          table.save(
+            formID,
+            {
+              formID,
+              requesterID: caller,
+              ...request,
+              status: "open",
+              responses: {},
+              createdAt: at,
+            },
+            { actorID: caller, at, action: "created", detail: request },
+          ),
         );
       });
     },
     get(input) {
       const request = parse(FormContracts.form_get.input, input);
       actors.get();
-      return recorded(table, request.formID);
+      return recorded(table, request.formID, request.history);
     },
     list(input = {}) {
       const query = parse(FormContracts.form_list.input, input);
       const { respondentWithin, awaitingWithin } = query;
       actors.get();
+      const { after: _after, limit: _limit, ...filter } = query;
+      const requesters = query.requesterID === undefined ? undefined : [query.requesterID].flat();
       return traverse(
+        actors,
         table,
         query,
+        ["forms", filter],
         (row) =>
           (query.workID === undefined || row.workID === query.workID) &&
-          (query.requesterID === undefined || row.requesterID === query.requesterID) &&
+          (requesters === undefined || requesters.includes(row.requesterID)) &&
           (query.respondentID === undefined || row.respondentIDs.includes(query.respondentID)) &&
           (query.requesterWithin === undefined ||
             actors.within(row.requesterID, query.requesterWithin)) &&
           (respondentWithin === undefined ||
             row.respondentIDs.some((id) => actors.within(id, respondentWithin))) &&
-          (query.status === undefined || row.status === query.status) &&
+          (query.status === undefined || query.status.includes(row.status)) &&
+          (query.updatedSince === undefined || row.updatedAt >= query.updatedSince) &&
           (query.awaitingActorID === undefined ||
             (row.status === "open" &&
               row.respondentIDs.includes(query.awaitingActorID) &&
@@ -96,6 +105,7 @@ export function createForms(
               row.respondentIDs.some(
                 (id) => actors.within(id, awaitingWithin) && !Object.hasOwn(row.responses, id),
               ))),
+        (row) => [row.requesterID, ...row.respondentIDs, ...Object.keys(row.responses)],
       );
     },
     respond(input) {
@@ -130,11 +140,18 @@ export function createForms(
             "answer is outside field options",
           );
         }
-        return table.save(
-          row.formID,
-          { ...state(row), responses: { ...row.responses, [caller]: request.answers } },
-          { actorID: caller, at: now(), action: "responded", detail: { answers: request.answers } },
-          request.expectedRevision,
+        return published(
+          table.save(
+            row.formID,
+            { ...stateOf(row), responses: { ...row.responses, [caller]: request.answers } },
+            {
+              actorID: caller,
+              at: now(),
+              action: "responded",
+              detail: { answers: request.answers },
+            },
+            request.expectedRevision,
+          ),
         );
       });
     },
@@ -147,11 +164,13 @@ export function createForms(
         requireThat(row.status === "open", "conflict", "form is closed");
         const at = now();
         const resolution = { text: request.resolution, at };
-        return table.save(
-          row.formID,
-          { ...state(row), status: request.status, resolution },
-          { actorID: caller, at, action: request.status, detail: resolution },
-          request.expectedRevision,
+        return published(
+          table.save(
+            row.formID,
+            { ...stateOf(row), status: request.status, resolution },
+            { actorID: caller, at, action: request.status, detail: resolution },
+            request.expectedRevision,
+          ),
         );
       });
     },

@@ -16,7 +16,6 @@ flowchart BT
     M -->|"sender and recipient"| A
     T -->|"owner and participants"| A
     F -->|"requester and respondents"| A
-    M -.->|"optional work reference"| T
 ```
 
 ## Exposure and authority
@@ -32,14 +31,14 @@ Both MCP exposures use the same Actor identity and role rules. The execution ser
 
 ## Module contracts
 
-| Module        | Consumes                                          | Exposes                                            | Owns                                                                             |
-| ------------- | ------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Actors        | Injected canonical authority and admitted caller  | `ActorsClient.get/list/within`                     | No persisted state; no lifecycle administration                                  |
-| Messages      | Actors; optional WorkReader; Messages persistence | `MessagesClient.send/get/list`                     | Content, parties, optional work context, send history                            |
-| Work tracking | Actors; Work persistence                          | `WorkClient` and its read-only `WorkReader` subset | Tickets, requester, owner, goal, progress/status, submission, review, history    |
-| Forms         | Actors; optional WorkReader; Forms persistence    | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution |
+| Module        | Consumes                                         | Exposes                                            | Owns                                                                             |
+| ------------- | ------------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Actors        | Injected canonical authority and admitted caller | `ActorsClient.get/list/within`                     | No persisted state; no lifecycle administration                                  |
+| Messages      | Actors; Messages persistence                     | `MessagesClient.send/get/list`                     | Content, parties, conversation and order                                         |
+| Work tracking | Actors; Work persistence                         | `WorkClient` and its read-only `WorkReader` subset | Tickets, requester, owner, goal, progress/status, submission, review, history    |
+| Forms         | Actors; optional WorkReader; Forms persistence   | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution |
 
-Work does not import Messages or Forms. A Work ticket needs neither. Direct messages and Forms need no work ticket or Work client; a reply is another flat direct message. Optional references validate existing shared Work on creation and have no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Work and Forms, including history, are public within the admitted organization; Messages remains private to sender/recipient. Form reads require no Work lookup. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
+Work does not import Messages or Forms. A Work ticket needs neither. Messages link no Work, and Forms need no work ticket or Work client; a reply is another message in the pair's conversation. A Form's optional Work reference validates existing shared Work on creation and has no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Work and Forms, including history, are public within the admitted organization; Messages remains private to sender/recipient. Form reads require no Work lookup. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
 
 The host binds one organization's canonical authority and persistence into the composition. Shared reads authenticate the existing caller; they do not construct a privileged Actor. Work owner/requester/status and Form work/requester/respondent/status/awaiting filters intersect before pagination, using the same traversal and record schemas. Business write roles remain separate from shared visibility.
 
@@ -47,15 +46,17 @@ The required synchronous canonical `within(callerID, actorID, ancestorID)` relat
 
 The root composition factory wires distinct clients; it is not another multi-domain operation client. Consumers can construct and use any module independently through its own export. Contracts depend only on Zod. Domain modules import persistence types; native SQLite is loaded only through the persistence implementation export.
 
-Message peer windows use the existing table's all/head/history reads. Exact private pair/direction qualification precedes selection; the optional latest/older path selects the newest qualified rows and emits the original ascending Page. Omitted before uses the unchanged shared forward traversal. There is no conversation registry, new store/query layer, output DTO, receipt state or change to Work/Form traversal. Older and forward positions remain separate query continuations.
+A Message's `conversationID` is derived from its pair when read and its `seq` is its module cursor, so neither is stored and there is no conversation registry. A later kind of conversation, such as a group or a Work thread, would store its own ID beside these without migrating them. Lists issue opaque positions that encode the read's filter and a cursor, so a position never continues another read; the records themselves carry no cursor, except a Message's `seq`. Each list resolves the Actor names it mentions through the directory, so a reader needs no lookup per ID.
 
 ## Persistence and state changes
 
-SQLite has separate current-snapshot and history tables for Messages, Work and Forms. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. Old submissions, reviews and responses remain in history after newer ones replace their current fields. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
+SQLite has separate current-snapshot and history tables for Messages, Work and Forms. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. A record's `updatedAt` is the time of the history entry for its current revision. Old submissions, reviews and responses remain in history after newer ones replace their current fields; reads return history only when asked. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
 
-Each module advances a persisted cursor on every mutation. Current snapshots are traversed by cursor; histories are read with their owning record. [Cursor semantics](contracts.md#cursors) describe the scope and limits. No event replay framework, scheduler, notification dispatcher, model executor or native session controller is part of this package. Record-changing communication happens only through these clients/tools; ordinary prose has no effect.
+The database records its schema in `PRAGMA user_version`. Opening a database runs, in one transaction, every upgrade step after its version: 0 is a database written by 0.4 or earlier. Steps change current snapshots in place and never rewrite history, so an original value a step removes stays in the event that recorded it. A database newer than the package is refused and left unchanged. Version 1 removes `workID` from Message snapshots.
 
-The v1 persistence adapter loads current snapshots for scoped filtering and returns full history per record. It is intended for the initial small workspace, without bounded-history or large-corpus performance guarantees. Database files belong to the host: use trusted local paths, appropriate filesystem access, and close owned connections before deleting test data. The fixture entry point has no production credential or network admission surface.
+Each module advances a persisted cursor on every mutation. Current snapshots are traversed by cursor; histories are read with their owning record. [List semantics](contracts.md#lists) describe the positions and limits. No event replay framework, scheduler, notification dispatcher, model executor or native session controller is part of this package. Record-changing communication happens only through these clients/tools; ordinary prose has no effect.
+
+The v1 persistence adapter loads current snapshots for scoped filtering and returns full history for a record when asked. It is intended for the initial small workspace, without bounded-history or large-corpus performance guarantees. Database files belong to the host: use trusted local paths, appropriate filesystem access, and close owned connections before deleting test data. The fixture entry point has no production credential or network admission surface.
 
 ## Repository map
 

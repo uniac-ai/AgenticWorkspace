@@ -2,7 +2,7 @@
 
 Durable private P2P messages and organization-shared work tickets and forms for active admitted Actor clients. Four separate clients expose identity/discovery, Messages, Work tracking, and Forms. Execution and viewer MCP servers share their records and authority rules. Work/Form list filters select matching records before pagination; business write roles remain unchanged.
 
-This package composes with Hub's canonical Actor authority and trusted admission, including the synchronous canonical relationship predicate described in the [adapter checkpoint](docs/hub-integration.md). Version 0.4.0 adds peer-qualified Message windows while preserving the existing forward request/result defaults. The runnable example uses model-free fixture identities; it is not production admission.
+This package composes with Hub's canonical Actor authority and trusted admission, including the synchronous canonical relationship predicate described in the [adapter checkpoint](docs/hub-integration.md). [Adopting 0.5](docs/hub-integration.md#adopting-05) lists what changed for hosts. The runnable example uses model-free fixture identities; it is not production admission.
 
 ## Run
 
@@ -53,17 +53,17 @@ function workspace(authority: ActorAuthority, admittedActorID: string, databaseP
   return {
     actors,
     work,
-    messages: createMessages(actors, store, work),
+    messages: createMessages(actors, store),
     forms: createForms(actors, store, work),
     close: () => store.close(),
   };
 }
 ```
 
-`ActorAuthority.get(callerID, actorID)` and `.list(callerID, query)` own directory visibility and current canonical state. The required synchronous `.within(callerID, actorID, ancestorID): boolean` supplies inclusive retained ancestry, including closed members/anchors at every depth; unknown IDs return false. Bound `ActorsClient.within(actorID, ancestorID)` revalidates its actual active caller without resolving selected profiles or changing identity. Hosts must implement this method when adopting 0.3.0. The workspace stores no Actor rows, hierarchy or credentials. The optional root `bindWorkspace` factory performs the same explicit composition and returns four distinct clients. Contracts and errors are exported at `/contracts`; SDK server construction is exported at `/mcp`.
+`ActorAuthority.get(callerID, actorID)` and `.list(callerID, query)` own directory visibility and current canonical state. The required synchronous `.within(callerID, actorID, ancestorID): boolean` supplies inclusive retained ancestry, including closed members/anchors at every depth; unknown IDs return false. Bound `ActorsClient.within(actorID, ancestorID)` revalidates its actual active caller without resolving selected profiles or changing identity. Hosts must implement this method. The workspace stores no Actor rows, hierarchy or credentials. The optional root `bindWorkspace` factory performs the same explicit composition and returns four distinct clients. Contracts and errors are exported at `/contracts`; SDK server construction is exported at `/mcp`.
 
-Work lists accept `ownerWithin` and `requesterWithin`; Form lists accept `requesterWithin`, `respondentWithin` and `awaitingWithin`. These select a canonical position and all descendants, intersecting with existing personal/status filters before pagination. Requester scope expresses where a record originated; it does not establish causal ticket lineage. See [filter and refresh semantics](docs/contracts.md#list-filters).
+Lists return `{items, next, actors}`: the page, an opaque position for the next page (null at the end) and the names of the Actors it mentions. Work and Form lists filter by status lists, one or several requesters, `updatedSince` and canonical subtrees (`ownerWithin`, `requesterWithin`, `respondentWithin`, `awaitingWithin`), and go newest first with `order: "recent"`. Records carry `updatedAt`; history comes only from `work_get`/`form_get` with `history: true`. See [lists](docs/contracts.md#lists).
 
-`messages.list({counterpartyID, before:"latest", limit:20})` returns the newest private peer window in ascending cursor order. A nonempty page's first cursor is the exclusive `before` for older history; its last cursor seeds a separate forward `after` position. Forward requests omit `before`, and existing unqualified calls retain their defaults. Never lower polling to an older page's `after` or advance it from an own-send response. See [Message windows](docs/contracts.md#message-windows).
+Each Message belongs to its pair's conversation (`conversationID`) and carries its place in the one Message order (`seq`). `messages.list({counterpartyID, before:"latest", limit:20})` returns a conversation's newest window ascending, with `older` for the page before it; `messages.list({direction:"incoming", after})` reads an Actor's input across conversations, from a `next` position or the last `seq` it handled. See [Messages](docs/contracts.md#messages).
 
 See [design and accepted graphs](docs/design.md), [contracts and transitions](docs/contracts.md), and [the explicit composition example](examples/consumer.ts). Tests cover requester/owner role swaps, database reopen, history/cursors, authorization, revisions, exact-submission review, SDK calls, stdio process restart, and an external TypeScript consumer importing only package exports.

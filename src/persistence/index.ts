@@ -1,8 +1,8 @@
 /** Transactional snapshots and retained module history; SQLite is the v1 implementation. */
 import type { FormState, HistoryEntry, MessageState, WorkState } from "../contracts/index.js";
 
-export type Snapshot<T> = T & { revision: number; cursor: number };
-export type Recorded<T> = Snapshot<T> & { history: HistoryEntry[] };
+/** updatedAt is the time of the event that wrote the current revision. */
+export type Snapshot<T> = T & { revision: number; cursor: number; updatedAt: string };
 export interface RecordTable<T> {
   get(id: string): Snapshot<T> | undefined;
   all(): Snapshot<T>[];
@@ -14,7 +14,7 @@ export interface RecordTable<T> {
     data: T,
     event: Pick<HistoryEntry, "actorID" | "at" | "action" | "detail">,
     expectedRevision?: number,
-  ): Recorded<T>;
+  ): Snapshot<T>;
 }
 export interface WorkspaceStore {
   messages: RecordTable<MessageState>;

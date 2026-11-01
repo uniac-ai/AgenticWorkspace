@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { contract, ID, ListInput, Metadata, pageOf, Revision, Text } from "./common.js";
+import {
+  contract,
+  ID,
+  Limit,
+  listOf,
+  Metadata,
+  Next,
+  OneOrMany,
+  Revision,
+  Text,
+} from "./common.js";
 
 export const WorkStatus = z.enum([
   "open",
@@ -39,30 +49,38 @@ export type WorkState = z.infer<typeof WorkState>;
 export type Work = z.infer<typeof Work>;
 const ticketID = z.strictObject({ ticketID: ID });
 const mutation = ticketID.extend({ expectedRevision: Revision });
+/** Every supplied filter must match; the page limit applies after them. */
+const filter = z.strictObject({
+  ownerID: ID.optional(),
+  requesterID: OneOrMany.optional(),
+  ownerWithin: ID.optional(),
+  requesterWithin: ID.optional(),
+  status: z.array(WorkStatus).min(1).optional(),
+  updatedSince: z.iso.datetime().optional(),
+  order: z.literal("recent").optional(),
+});
 export const WorkContracts = {
   work_create: contract(
+    "report",
     "Create a durable ticket; caller requests and reviews, owner executes.",
     z.strictObject({ goal: Text, ownerID: ID }),
     Work,
     true,
   ),
   work_get: contract(
-    "Read shared organization work and retained history, including accepted work.",
-    ticketID,
+    "report",
+    "Read shared organization work, including accepted work; history only when asked.",
+    ticketID.extend({ history: z.boolean().default(false) }),
     Work,
   ),
   work_list: contract(
-    "Traverse shared work upserts matching every exact, status and inclusive canonical subtree filter.",
-    ListInput.extend({
-      ownerID: ID.optional(),
-      requesterID: ID.optional(),
-      ownerWithin: ID.optional(),
-      requesterWithin: ID.optional(),
-      status: WorkStatus.optional(),
-    }),
-    pageOf(Work),
+    "report",
+    "List shared work matching every filter, by update order or most recent first.",
+    filter.extend({ after: Next.optional(), limit: Limit }),
+    listOf(Work),
   ),
   work_update: contract(
+    "report",
     "Requester edits goal/owner; owner edits progress/open-active-blocked status with revision check.",
     mutation
       .extend({
@@ -82,12 +100,14 @@ export const WorkContracts = {
     true,
   ),
   work_submit: contract(
+    "report",
     "Owner submits result and evidence for explicit review; returns a new submissionID.",
     mutation.extend({ result: Text, evidence: z.array(Text).max(100) }),
     Work,
     true,
   ),
   work_review: contract(
+    "team",
     "Requester reviews the exact current submission; self-review records the same reviewer identity.",
     mutation.extend({
       submissionID: ID,
