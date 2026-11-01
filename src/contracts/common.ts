@@ -29,6 +29,11 @@ export const Metadata = {
   history: z.array(History).optional(),
 };
 export const Actors = z.record(ID, z.strictObject({ name: Text }));
+export const Link = z.strictObject({
+  label: z.string().trim().min(1).max(200).optional(),
+  url: z.url({ protocol: /^https?$/ }).max(2000),
+});
+export const Links = z.array(Link).max(50);
 export type HistoryEntry = z.infer<typeof History>;
 export interface Page<T> {
   items: T[];

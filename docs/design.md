@@ -10,7 +10,7 @@ Arrows point toward a dependency; dashed edges are optional. Forms and Work trac
 flowchart BT
     A["Actors<br/>Identity, discovery and canonical membership"]
     M["Messages<br/>Persistent direct messaging"]
-    T["Work tracking<br/>Ticket, owner, progress, result and review"]
+    T["Work tracking<br/>Work, owner, progress, result and review"]
     F["Forms and questions<br/>Fields, respondents, responses and resolution"]
     F -.->|"optional work reference"| T
     M -->|"sender and recipient"| A
@@ -31,12 +31,12 @@ Both MCP exposures use the same Actor identity and role rules. The execution ser
 
 ## Module contracts
 
-| Module        | Consumes                                         | Exposes                                            | Owns                                                                             |
-| ------------- | ------------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Actors        | Injected canonical authority and admitted caller | `ActorsClient.get/list/within`                     | No persisted state; no lifecycle administration                                  |
-| Messages      | Actors; Messages persistence                     | `MessagesClient.send/get/list`                     | Content, parties, conversation and order                                         |
-| Work tracking | Actors; Work persistence                         | `WorkClient` and its read-only `WorkReader` subset | Tickets, requester, owner, goal, progress/status, submission, review, history    |
-| Forms         | Actors; optional WorkReader; Forms persistence   | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution |
+| Module        | Consumes                                         | Exposes                                            | Owns                                                                                                            |
+| ------------- | ------------------------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Actors        | Injected canonical authority and admitted caller | `ActorsClient.get/list/within`                     | No persisted state; no lifecycle administration                                                                 |
+| Messages      | Actors; Messages persistence                     | `MessagesClient.send/get/list`                     | Content, parties, conversation and order                                                                        |
+| Work tracking | Actors; Work persistence                         | `WorkClient` and its read-only `WorkReader` subset | Work: requester, owner, title, goal, progress, status, links, waits-on, submission, review, completion, history |
+| Forms         | Actors; optional WorkReader; Forms persistence   | `FormsClient`                                      | Fields, respondents, latest answers and every prior response, closure/resolution                                |
 
 Work does not import Messages or Forms. A Work ticket needs neither. Messages link no Work, and Forms need no work ticket or Work client; a reply is another message in the pair's conversation. A Form's optional Work reference validates existing shared Work on creation and has no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Work and Forms, including history, are public within the admitted organization; Messages remains private to sender/recipient. Form reads require no Work lookup. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
 
@@ -52,7 +52,7 @@ A Message's `conversationID` is derived from its pair when read and its `seq` is
 
 SQLite has separate current-snapshot and history tables for Messages, Work and Forms. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. A record's `updatedAt` is the time of the history entry for its current revision. Old submissions, reviews and responses remain in history after newer ones replace their current fields; reads return history only when asked. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
 
-The database records its schema in `PRAGMA user_version`. Opening a database runs, in one transaction, every upgrade step after its version: 0 is a database written by 0.4 or earlier. Steps change current snapshots in place and never rewrite history, so an original value a step removes stays in the event that recorded it. A database newer than the package is refused and left unchanged. Version 1 removes `workID` from Message snapshots.
+The database records its schema in `PRAGMA user_version`. Opening a database runs, in one transaction, every upgrade step after its version: 0 is a database written by 0.4 or earlier. Steps change current snapshots in place and never rewrite history, so an original value a step removes stays in the event that recorded it. A database newer than the package is refused and left unchanged. Version 1 removes `workID` from Message snapshots. Version 2 gives Work a `title`, the first line of its goal cut at a word boundary to 120 characters with "…", and empty `links`, and gives accepted Work the `completedAt` of the review that accepted it; the goal is unchanged.
 
 Each module advances a persisted cursor on every mutation. Current snapshots are traversed by cursor; histories are read with their owning record. [List semantics](contracts.md#lists) describe the positions and limits. No event replay framework, scheduler, notification dispatcher, model executor or native session controller is part of this package. Record-changing communication happens only through these clients/tools; ordinary prose has no effect.
 

@@ -98,7 +98,7 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
   assert.equal(Object.hasOwn(namedActor, "kind"), false);
   assert.equal((await call<Page<Actor>>(requester, "actor_list", { limit: 1 })).items.length, 1);
   const ticket = await call<Work>(requester, "work_create", {
-    goal: "Protocol-delivered work",
+    title: "Protocol-delivered work",
     ownerID: "owner",
   });
   assert.equal(
@@ -187,7 +187,7 @@ test("SDK execution/viewer discovery and all 16 calls share records and enforce 
     (await call<Work>(viewer, "work_get", { ticketID: ticket.ticketID })).status,
     "accepted",
   );
-  await refused(viewer, "work_create", { goal: "Rejected write", ownerID: "owner" }, "forbidden");
+  await refused(viewer, "work_create", { title: "Rejected write", ownerID: "owner" }, "forbidden");
   assert.equal(
     (await call<Work>(outsider, "work_get", { ticketID: ticket.ticketID })).status,
     "accepted",
@@ -266,7 +266,7 @@ test("SDK boundary sanitizes unexpected failures and checks revoked caller", asy
     store,
     "requester",
   );
-  clients.work.create({ goal: "Membership failure fixture", ownerID: "owner" });
+  clients.work.create({ title: "Membership failure fixture", ownerID: "owner" });
   const server = createMcpServer(
     {
       ...clients,
@@ -410,7 +410,7 @@ test("npm start target serves SDK stdio across independent processes and durable
   let id = "";
   await session("execution", async (client) => {
     const ticket = await call<Work>(client, "work_create", {
-      goal: "Reopen stdio database",
+      title: "Reopen stdio database",
       ownerID: "owner",
     });
     id = ticket.ticketID;
@@ -418,9 +418,9 @@ test("npm start target serves SDK stdio across independent processes and durable
   await session("viewer", async (client) => {
     assert.equal((await client.listTools()).tools.length, 8);
     assert.equal(
-      (await call<Work>(client, "work_get", { ticketID: id })).goal,
+      (await call<Work>(client, "work_get", { ticketID: id })).title,
       "Reopen stdio database",
     );
-    await refused(client, "work_create", { goal: "Viewer write", ownerID: "owner" }, "forbidden");
+    await refused(client, "work_create", { title: "Viewer write", ownerID: "owner" }, "forbidden");
   });
 });

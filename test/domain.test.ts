@@ -60,7 +60,7 @@ for (const requesterClient of ["human", "software"] as const)
       const owner = f.as("owner");
       const respondent = f.as("respondent");
       const outsider = f.as("outsider");
-      const ticket = requester.work.create({ goal: "Deliver evidence", ownerID: "owner" });
+      const ticket = requester.work.create({ title: "Deliver evidence", ownerID: "owner" });
       assert.equal(ticket.status, "open");
       assert.equal(requester.messages.list().items.length, 0);
       assert.equal(requester.forms.list().items.length, 0);
@@ -357,7 +357,7 @@ test("shared standalone and linked Form reads never consult Work; linked creatio
     () => withoutWork.create({ ...input, respondentIDs: ["absent"] }),
     rejects("not_found"),
   );
-  const ticket = requester.work.create({ goal: "Optional linked context", ownerID: "owner" });
+  const ticket = requester.work.create({ title: "Optional linked context", ownerID: "owner" });
   assert.throws(
     () => withoutWork.create({ ...input, workID: ticket.ticketID }),
     rejects("invalid_input"),
@@ -413,7 +413,7 @@ test("shared standalone and linked Form reads never consult Work; linked creatio
 
 test("revision conflicts across independent SQLite connections roll back snapshots and history", async (t) => {
   const f = fixture(t);
-  const ticket = f.as("requester").work.create({ goal: "Concurrent updates", ownerID: "owner" });
+  const ticket = f.as("requester").work.create({ title: "Concurrent updates", ownerID: "owner" });
   const other = f.second();
   const attempts = await Promise.allSettled(
     ["first", "second"].map((progress, i) =>
@@ -440,8 +440,9 @@ test("revision conflicts across independent SQLite connections roll back snapsho
           ticketID: "rolled-back",
           requesterID: "requester",
           ownerID: "owner",
-          goal: "Must roll back",
+          title: "Must roll back",
           status: "open",
+          links: [],
           createdAt: new Date().toISOString(),
         },
         { actorID: "owner", at: new Date().toISOString(), action: "created", detail: {} },
@@ -489,10 +490,10 @@ test("multi-page filtered upserts, duplicate updated rows and disappearing match
   const request = f.as("requester");
   const hidden = f
     .as("outsider")
-    .work.create({ goal: "Different owner and requester", ownerID: "outsider" });
-  const first = request.work.create({ goal: "First", ownerID: "owner" });
-  const second = request.work.create({ goal: "Second", ownerID: "owner" });
-  const third = request.work.create({ goal: "Third", ownerID: "owner" });
+    .work.create({ title: "Different owner and requester", ownerID: "outsider" });
+  const first = request.work.create({ title: "First", ownerID: "owner" });
+  const second = request.work.create({ title: "Second", ownerID: "owner" });
+  const third = request.work.create({ title: "Third", ownerID: "owner" });
   const filters = { ownerID: "owner", requesterID: "requester" };
   const page1 = f.as("owner").work.list({ ...filters, limit: 1 });
   assert.deepEqual(
@@ -602,12 +603,12 @@ test("shared Work/Form AND filters precede pagination; awaiting means open, desi
   const f = fixture(t);
   const request = f.as("requester");
   const observer = f.as("outsider");
-  observer.work.create({ goal: "Other requester", ownerID: "owner" });
-  const otherOwner = request.work.create({ goal: "Other owner", ownerID: "outsider" });
-  const first = request.work.create({ goal: "First match", ownerID: "owner" });
-  const active = request.work.create({ goal: "Other status", ownerID: "owner" });
+  observer.work.create({ title: "Other requester", ownerID: "owner" });
+  const otherOwner = request.work.create({ title: "Other owner", ownerID: "outsider" });
+  const first = request.work.create({ title: "First match", ownerID: "owner" });
+  const active = request.work.create({ title: "Other status", ownerID: "owner" });
   f.as("owner").work.update({ ticketID: active.ticketID, expectedRevision: 1, status: "active" });
-  const second = request.work.create({ goal: "Second match", ownerID: "owner" });
+  const second = request.work.create({ title: "Second match", ownerID: "owner" });
   assert.equal(observer.work.list().items.length, 5);
   assert.deepEqual(observer.work.get({ ticketID: first.ticketID }), first);
   const workFilters = {
@@ -770,7 +771,7 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
   for (let i = 0; i < 21; i++) {
     const by = i % 3 === 0 ? observer : requester;
     const row = by.work.create({
-      goal: `Interleaved ${i}`,
+      title: `Interleaved ${i}`,
       ownerID: i % 3 === 2 ? "outsider" : "respondent",
     });
     if (i % 3 === 1) expected.push(row);
@@ -784,7 +785,7 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     f.managers.set(id, deep);
     deep = id;
   }
-  const ticket = requester.work.create({ goal: "Retained deep result", ownerID: deep });
+  const ticket = requester.work.create({ title: "Retained deep result", ownerID: deep });
   const submitted = f.as(deep).work.submit({
     ticketID: ticket.ticketID,
     expectedRevision: 1,
@@ -873,7 +874,7 @@ test("Form subtree existential predicates stay separate across sparse pages, ans
   const requester = f.as("owner");
   const other = f.as("outsider");
   const observer = f.as("requester");
-  const work = observer.work.create({ goal: "Optional context", ownerID: "owner" });
+  const work = observer.work.create({ title: "Optional context", ownerID: "owner" });
   const fields = [{ name: "answer", label: "Optional", required: false }];
   const first = requester.forms.create({
     workID: work.ticketID,
@@ -991,37 +992,155 @@ test("Form subtree existential predicates stay separate across sparse pages, ans
   );
 });
 
-test("self-review is an explicit requester call with actual reviewer identity", (t) => {
+test("an Actor's own Work: defaults to itself, edits without revisions and completes on submit", (t) => {
   const f = fixture(t);
-  const client = f.as("requester");
-  const ticket = client.work.create({ goal: "Self-owned work", ownerID: "requester" });
-  const submitted = client.work.submit({
+  const agent = f.as("owner");
+  const ticket = agent.work.create({ title: "Cut the release" });
+  assert.equal(ticket.requesterID, "owner");
+  assert.equal(ticket.ownerID, "owner");
+  assert.deepEqual(ticket.links, []);
+  assert.equal(Object.hasOwn(ticket, "goal"), false);
+  const blocker = agent.work.create({ title: "Wait for CI", goal: "Three checks pass" });
+  const link = { label: "PR", url: "https://example.test/pull/1" };
+  const waiting = agent.work.update({
+    ticketID: ticket.ticketID,
+    title: "Cut the 0.5 release",
+    progress: "Tagged.\n\n1. Pack\n2. Pin",
+    status: "active",
+    links: [link],
+    waitsOn: { ticketID: blocker.ticketID },
+  });
+  assert.equal(waiting.revision, 2);
+  assert.deepEqual(waiting.waitsOn, { ticketID: blocker.ticketID });
+  for (const waitsOn of [{ actorID: "requester" }, { text: "3 PRs in CI" }])
+    assert.deepEqual(agent.work.update({ ticketID: ticket.ticketID, waitsOn }).waitsOn, waitsOn);
+  assert.deepEqual(
+    agent.work.list({ waitsOnActorID: "requester" }).items.map((row) => row.ticketID),
+    [],
+  );
+  const cleared = agent.work.update({ ticketID: ticket.ticketID, waitsOn: null });
+  assert.equal(Object.hasOwn(cleared, "waitsOn"), false);
+  for (const waitsOn of [{ actorID: "absent" }, { ticketID: "absent" }])
+    assert.throws(
+      () => agent.work.update({ ticketID: ticket.ticketID, waitsOn }),
+      rejects("not_found"),
+    );
+  for (const edit of [
+    { links: [{ url: "javascript:alert(1)" }] },
+    { links: [{ url: "file:///tmp/evidence" }] },
+    { title: "x".repeat(121) },
+    { waitsOn: { text: "" } },
+    { waitsOn: { actorID: "requester", text: "both" } },
+    {},
+  ])
+    assert.throws(
+      () => agent.work.update({ ticketID: ticket.ticketID, ...edit } as never),
+      rejects("invalid_input"),
+    );
+  assert.throws(
+    () => agent.work.update({ ticketID: ticket.ticketID, goal: "Requester edit" }),
+    rejects("invalid_input"),
+  );
+  assert.throws(
+    () => agent.work.update({ ticketID: ticket.ticketID, expectedRevision: 1, title: "Stale" }),
+    rejects("conflict"),
+  );
+  const done = agent.work.submit({ ticketID: ticket.ticketID, result: "Released" });
+  assert.equal(done.status, "accepted");
+  assert.equal(done.completedAt, done.submission?.at);
+  assert.deepEqual(done.submission?.evidence, []);
+  assert.equal(done.review, undefined);
+  assert.throws(
+    () => agent.work.update({ ticketID: ticket.ticketID, progress: "After completion" }),
+    rejects("conflict"),
+  );
+  assert.deepEqual(
+    agent.work.list({ status: ["accepted"], order: "recent" }).items.map((row) => row.ticketID),
+    [ticket.ticketID],
+  );
+});
+
+test("Work another Actor requested waits for review; accepting needs no comment", (t) => {
+  const f = fixture(t);
+  const manager = f.as("requester");
+  const report = f.as("owner");
+  const ticket = manager.work.create({
+    title: "Assigned",
+    goal: "Ship it",
+    ownerID: "owner",
+    waitsOn: { actorID: "respondent" },
+  });
+  assert.deepEqual(manager.work.list({ waitsOnActorID: "respondent" }), {
+    items: [ticket],
+    next: null,
+    actors: {
+      owner: { name: "Owner" },
+      requester: { name: "Requester" },
+      respondent: { name: "Respondent" },
+    },
+  });
+  assert.throws(
+    () => report.work.update({ ticketID: ticket.ticketID, expectedRevision: 1, goal: "Mine" }),
+    rejects("forbidden"),
+  );
+  assert.throws(
+    () => manager.work.update({ ticketID: ticket.ticketID, title: "Not the owner's" }),
+    rejects("forbidden"),
+  );
+  const regoal = manager.work.update({
     ticketID: ticket.ticketID,
     expectedRevision: 1,
-    result: "Done",
-    evidence: [],
+    goal: "Ship it twice",
   });
-  assert.equal(submitted.status, "submitted");
-  assert.equal(submitted.review, undefined);
-  assert.ok(submitted.submission);
-  const reviewed = client.work.review({
-    ticketID: ticket.ticketID,
-    expectedRevision: submitted.revision,
-    submissionID: submitted.submission.submissionID,
-    verdict: "accepted",
-    comment: "Requester self-review",
-  });
-  assert.equal(reviewed.review?.reviewerID, "requester");
-  assert.equal(reviewed.submission?.ownerID, "requester");
-  assert.equal(
-    client.work.get({ ticketID: ticket.ticketID, history: true }).history?.at(-1)?.actorID,
-    "requester",
+  const first = report.work.submit({ ticketID: ticket.ticketID, result: "Shipped" });
+  assert.equal(first.status, "submitted");
+  assert.equal(first.completedAt, undefined);
+  assert.ok(first.submission);
+  assert.throws(
+    () =>
+      manager.work.review({
+        ticketID: ticket.ticketID,
+        submissionID: first.submission?.submissionID ?? "",
+        verdict: "changes_requested",
+      }),
+    rejects("invalid_input"),
   );
+  const changes = manager.work.review({
+    ticketID: ticket.ticketID,
+    submissionID: first.submission.submissionID,
+    verdict: "changes_requested",
+    comment: "Once more",
+  });
+  assert.equal(changes.completedAt, undefined);
+  const second = report.work.submit({
+    ticketID: ticket.ticketID,
+    expectedRevision: changes.revision,
+    result: "Shipped twice",
+  });
+  assert.throws(
+    () =>
+      manager.work.review({
+        ticketID: ticket.ticketID,
+        submissionID: first.submission?.submissionID ?? "",
+        verdict: "accepted",
+      }),
+    rejects("conflict"),
+  );
+  const accepted = manager.work.review({
+    ticketID: ticket.ticketID,
+    submissionID: second.submission?.submissionID ?? "",
+    verdict: "accepted",
+  });
+  assert.equal(accepted.status, "accepted");
+  assert.equal(accepted.goal, regoal.goal);
+  assert.equal(accepted.completedAt, accepted.review?.at);
+  assert.equal(Object.hasOwn(accepted.review ?? {}, "comment"), false);
+  assert.equal(accepted.review?.reviewerID, "requester");
 });
 
 test("canonical visibility, active callers and retained reads after counterparty closure", (t) => {
   const f = fixture(t);
-  const ticket = f.as("requester").work.create({ goal: "Retain history", ownerID: "owner" });
+  const ticket = f.as("requester").work.create({ title: "Retain history", ownerID: "owner" });
   const message = f.as("owner").messages.send({ recipientID: "requester", text: "Retain me" });
   const owner = f.rows.get("owner");
   assert.ok(owner);
@@ -1083,7 +1202,7 @@ test("canonical visibility, active callers and retained reads after counterparty
 test("lists name their Actors, go newest first and select by update time and several requesters", (t) => {
   const f = fixture(t);
   const created = ["requester", "outsider", "owner"].map((by, i) =>
-    f.as(by).work.create({ goal: `Work ${i}`, ownerID: "respondent" }),
+    f.as(by).work.create({ title: `Work ${i}`, ownerID: "respondent" }),
   );
   const [first, second, third] = created;
   assert.ok(first && second && third);

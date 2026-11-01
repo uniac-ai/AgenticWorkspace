@@ -3,6 +3,7 @@ import {
   contract,
   ID,
   Limit,
+  Links,
   listOf,
   Metadata,
   Next,
@@ -30,29 +31,43 @@ export const Review = z.strictObject({
   submissionID: ID,
   reviewerID: ID,
   verdict: z.enum(["accepted", "changes_requested"]),
-  comment: Text,
+  comment: Text.optional(),
   at: z.iso.datetime(),
 });
+/** What the Work waits on outside itself: an Actor, other Work, or a short description. */
+export const WaitsOn = z.union([
+  z.strictObject({ actorID: ID }),
+  z.strictObject({ ticketID: ID }),
+  z.strictObject({ text: z.string().trim().min(1).max(200) }),
+]);
+export const Title = z.string().trim().min(1).max(120);
 export const WorkState = z.strictObject({
   ticketID: ID,
   requesterID: ID,
   ownerID: ID,
-  goal: Text,
+  title: Title,
+  goal: Text.optional(),
   progress: Text.optional(),
   status: WorkStatus,
+  links: Links,
+  waitsOn: WaitsOn.optional(),
   createdAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().optional(),
   submission: Submission.optional(),
   review: Review.optional(),
 });
 export const Work = WorkState.extend(Metadata);
 export type WorkState = z.infer<typeof WorkState>;
+export type WaitsOn = z.infer<typeof WaitsOn>;
 export type Work = z.infer<typeof Work>;
 const ticketID = z.strictObject({ ticketID: ID });
-const mutation = ticketID.extend({ expectedRevision: Revision });
+/** The revision check is optional on the owner's own writes, which can't conflict. */
+const mutation = ticketID.extend({ expectedRevision: Revision.optional() });
 /** Every supplied filter must match; the page limit applies after them. */
 const filter = z.strictObject({
   ownerID: ID.optional(),
   requesterID: OneOrMany.optional(),
+  waitsOnActorID: ID.optional(),
   ownerWithin: ID.optional(),
   requesterWithin: ID.optional(),
   status: z.array(WorkStatus).min(1).optional(),
@@ -62,8 +77,14 @@ const filter = z.strictObject({
 export const WorkContracts = {
   work_create: contract(
     "report",
-    "Create a durable ticket; caller requests and reviews, owner executes.",
-    z.strictObject({ goal: Text, ownerID: ID }),
+    "Create Work; the caller requests it and owns it unless ownerID names another Actor.",
+    z.strictObject({
+      title: Title,
+      goal: Text.optional(),
+      ownerID: ID.optional(),
+      links: Links.optional(),
+      waitsOn: WaitsOn.optional(),
+    }),
     Work,
     true,
   ),
@@ -81,39 +102,40 @@ export const WorkContracts = {
   ),
   work_update: contract(
     "report",
-    "Requester edits goal/owner; owner edits progress/open-active-blocked status with revision check.",
+    "Owner edits title, progress, open/active/blocked status, links and waitsOn (null clears it); requester edits goal or owner with expectedRevision. Progress is a paragraph, then optionally a Markdown task list of steps: `- [x]` done, `- [ ]` not done.",
     mutation
       .extend({
+        title: Title.optional(),
         goal: Text.optional(),
         ownerID: ID.optional(),
         progress: Text.optional(),
         status: z.enum(["open", "active", "blocked"]).optional(),
+        links: Links.optional(),
+        waitsOn: WaitsOn.nullable().optional(),
       })
-      .refine(
-        (v) =>
-          v.goal !== undefined ||
-          v.ownerID !== undefined ||
-          v.progress !== undefined ||
-          v.status !== undefined,
+      .refine(({ ticketID: _ticketID, expectedRevision: _revision, ...edits }) =>
+        Object.values(edits).some((value) => value !== undefined),
       ),
     Work,
     true,
   ),
   work_submit: contract(
     "report",
-    "Owner submits result and evidence for explicit review; returns a new submissionID.",
-    mutation.extend({ result: Text, evidence: z.array(Text).max(100) }),
+    "Owner submits the result; Work the owner requested itself completes, other Work waits for review.",
+    mutation.extend({ result: Text, evidence: z.array(Text).max(100).default([]) }),
     Work,
     true,
   ),
   work_review: contract(
     "team",
-    "Requester reviews the exact current submission; self-review records the same reviewer identity.",
-    mutation.extend({
-      submissionID: ID,
-      verdict: z.enum(["accepted", "changes_requested"]),
-      comment: Text,
-    }),
+    "Requester accepts or requests changes on the exact current submission; requesting changes needs a comment.",
+    mutation
+      .extend({
+        submissionID: ID,
+        verdict: z.enum(["accepted", "changes_requested"]),
+        comment: Text.optional(),
+      })
+      .refine((v) => v.verdict === "accepted" || v.comment !== undefined),
     Work,
     true,
   ),
