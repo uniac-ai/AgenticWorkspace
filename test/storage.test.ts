@@ -11,21 +11,34 @@ import { openSqlite } from "../src/persistence/index.js";
 const at = "2026-10-31T12:00:00.000Z";
 const reviewedAt = "2026-10-31T13:00:00.000Z";
 const longGoal = `Ship ${"release ".repeat(20).trim()}\nDetails on the second line`;
+const answeredAt = "2026-10-31T14:00:00.000Z";
+const ask = {
+  respondentIDs: ["owner", "respondent"],
+  fields: [{ name: "choice", label: "Which?", required: true, options: ["a", "b"] }],
+};
+type Event = { actorID: string; at: string; action: string; detail: object };
 /** A database as Workspace 0.4 wrote it: no user_version, and Messages may link Work. */
 function legacy(file: string) {
   const db = new DatabaseSync(file);
   let cursor = 0;
   function insert(name: string, id: string, data: object, action: string, detail: object) {
-    cursor++;
-    db.prepare(`INSERT INTO ${name}(id,revision,cursor,data) VALUES(?,1,?,?)`).run(
+    record(name, id, data, [{ actorID: "requester", at, action, detail }]);
+  }
+  function record(name: string, id: string, data: object, events: Event[]) {
+    events.forEach((event, i) => {
+      cursor++;
+      db.prepare(`INSERT INTO ${name}_history(id,revision,cursor,event) VALUES(?,?,?,?)`).run(
+        id,
+        i + 1,
+        cursor,
+        JSON.stringify({ ...event, revision: i + 1, cursor }),
+      );
+    });
+    db.prepare(`INSERT INTO ${name}(id,revision,cursor,data) VALUES(?,?,?,?)`).run(
       id,
+      events.length,
       cursor,
       JSON.stringify(data),
-    );
-    db.prepare(`INSERT INTO ${name}_history(id,revision,cursor,event) VALUES(?,1,?,?)`).run(
-      id,
-      cursor,
-      JSON.stringify({ actorID: "requester", at, action, detail, revision: 1, cursor }),
     );
   }
   for (const name of ["messages", "work", "forms"])
@@ -71,6 +84,28 @@ function legacy(file: string) {
     "created",
     unbroken,
   );
+  record(
+    "forms",
+    "form",
+    {
+      formID: "form",
+      requesterID: "requester",
+      ...ask,
+      status: "open",
+      responses: { owner: { choice: "a" } },
+      createdAt: at,
+    },
+    [
+      { actorID: "requester", at, action: "created", detail: ask },
+      { actorID: "owner", at, action: "responded", detail: { answers: { choice: "b" } } },
+      {
+        actorID: "owner",
+        at: answeredAt,
+        action: "responded",
+        detail: { answers: { choice: "a" } },
+      },
+    ],
+  );
   const sent = { recipientID: "owner", text: "Linked", workID: "ticket" };
   insert(
     "messages",
@@ -101,7 +136,7 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
       const owner = bindWorkspace(fixtureAuthority().authority, store, "owner");
       const message = owner.messages.get({ messageID: "message" });
       assert.equal(Object.hasOwn(message, "workID"), false);
-      assert.equal(message.seq, 4);
+      assert.equal(message.seq, 7);
       assert.equal(store.messages.history("message")[0]?.detail.workID, "ticket");
       const pending = owner.work.get({ ticketID: "ticket" });
       assert.equal(pending.updatedAt, at);
@@ -114,14 +149,34 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
       assert.equal(accepted.title, `Ship ${Array(14).fill("release").join(" ")}…`);
       assert.equal(accepted.goal, longGoal);
       assert.equal(owner.work.get({ ticketID: "unbroken" }).title, `${"x".repeat(119)}…`);
+      const form = owner.forms.get({ formID: "form" });
+      assert.equal(Object.hasOwn(form, "respondentIDs"), false);
+      assert.equal(form.title, "Which?");
+      assert.equal(form.fields[0]?.label, "Which?");
+      assert.deepEqual(
+        [form.links, form.approval, form.collect, form.status, form.updatedAt],
+        [[], false, true, "open", answeredAt],
+      );
+      assert.deepEqual(form.fields[0]?.options, [{ value: "a" }, { value: "b" }]);
+      assert.deepEqual(form.responses, { owner: { answers: { choice: "a" }, at: answeredAt } });
+      assert.deepEqual(store.forms.history("form")[0]?.detail, ask);
     } finally {
       store.close();
     }
-    assert.equal(version(file), 2);
+    assert.equal(version(file), 3);
+  }
+  const store = openSqlite(file);
+  try {
+    const outsider = bindWorkspace(fixtureAuthority().authority, store, "outsider");
+    const answered = outsider.forms.respond({ formID: "form", answers: { choice: "b" } });
+    assert.equal(answered.status, "open");
+    assert.deepEqual(Object.keys(answered.responses), ["owner", "outsider"]);
+  } finally {
+    store.close();
   }
   const fresh = join(dir, "fresh.sqlite");
   openSqlite(fresh).close();
-  assert.equal(version(fresh), 2);
+  assert.equal(version(fresh), 3);
   const newer = new DatabaseSync(file);
   newer.exec("PRAGMA user_version=99");
   newer.close();

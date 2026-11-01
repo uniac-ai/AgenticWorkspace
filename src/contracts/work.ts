@@ -10,6 +10,7 @@ import {
   OneOrMany,
   Revision,
   Text,
+  Title,
 } from "./common.js";
 
 export const WorkStatus = z.enum([
@@ -40,7 +41,6 @@ export const WaitsOn = z.union([
   z.strictObject({ ticketID: ID }),
   z.strictObject({ text: z.string().trim().min(1).max(200) }),
 ]);
-export const Title = z.string().trim().min(1).max(120);
 export const WorkState = z.strictObject({
   ticketID: ID,
   requesterID: ID,

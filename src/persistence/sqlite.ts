@@ -3,7 +3,7 @@ import { requireThat } from "../contracts/common.js";
 import type { HistoryEntry } from "../contracts/index.js";
 import type { RecordTable, Snapshot, WorkspaceStore } from "./index.js";
 
-const MODULES = ["messages", "work", "forms"] as const;
+const MODULES = ["messages", "work", "forms", "status"] as const;
 /**
  * Step N upgrades a database at user_version N; 0 is a 0.4 database. Snapshots change in place and
  * history keeps every original event.
@@ -22,6 +22,33 @@ const UPGRADES: ((db: DatabaseSync) => void)[] = [
         JSON.stringify({ ...work, title: headline(work.goal), links: [], completedAt }),
         String(id),
       );
+    }
+  },
+  // 0.5: asks have a title from their first field's label, name no respondents and stay open until
+  // their asker closes them, as 0.4 Forms did; options carry detail, and each response the time of
+  // its last answer.
+  (db) => {
+    const events = db.prepare("SELECT event FROM forms_history WHERE id=? ORDER BY revision");
+    const update = db.prepare("UPDATE forms SET data=? WHERE id=?");
+    for (const { id, data } of db.prepare("SELECT id,data FROM forms").all()) {
+      const { respondentIDs: _respondents, ...form } = JSON.parse(String(data));
+      const answered = new Map<string, string>();
+      for (const row of events.all(String(id))) {
+        const event = JSON.parse(String(row.event));
+        if (event.action === "responded") answered.set(event.actorID, event.at);
+      }
+      const fields = form.fields.map((field: { options?: string[] }) =>
+        field.options ? { ...field, options: field.options.map((value) => ({ value })) } : field,
+      );
+      const responses = Object.fromEntries(
+        Object.entries(form.responses).map(([actorID, answers]) => [
+          actorID,
+          { answers, at: answered.get(actorID) },
+        ]),
+      );
+      const title = headline(form.fields[0].label);
+      const ask = { ...form, title, links: [], approval: false, collect: true, fields, responses };
+      update.run(JSON.stringify(ask), String(id));
     }
   },
 ];
@@ -116,6 +143,7 @@ export function openSqlite(path: string): WorkspaceStore {
     messages: table("messages"),
     work: table("work"),
     forms: table("forms"),
+    status: table("status"),
     transaction,
     close: () => db.close(),
   };

@@ -1,6 +1,6 @@
 # Agentic Workspace
 
-Durable private P2P messages and organization-shared work tickets and forms for active admitted Actor clients. Four separate clients expose identity/discovery, Messages, Work tracking, and Forms. Execution and viewer MCP servers share their records and authority rules. Work/Form list filters select matching records before pagination; business write roles remain unchanged.
+Durable private P2P messages, and organization-shared Work, asks and status for active admitted Actor clients. Five separate clients expose identity/discovery, Messages, Work tracking, Forms (asks) and Status. Execution and viewer MCP servers share their records and authority rules. Work/Form list filters select matching records before pagination; business write roles remain unchanged.
 
 This package composes with Hub's canonical Actor authority and trusted admission, including the synchronous canonical relationship predicate described in the [adapter checkpoint](docs/hub-integration.md). [Adopting 0.5](docs/hub-integration.md#adopting-05) lists what changed for hosts. The runnable example uses model-free fixture identities; it is not production admission.
 
@@ -16,7 +16,7 @@ npm run build
 npm run --silent start -- --actor requester --purpose execution --db ./fixture.sqlite
 ```
 
-The last command serves MCP JSON-RPC on stdin/stdout and waits for an MCP client. Use `--purpose viewer` for eight read-only tools over the same database. Fixture Actors are `requester`, `owner`, `respondent`, and `outsider`. `--db` defaults to `:memory:`; a named database retains records between processes. These example flags select fixtures and do not authenticate real callers. No network port is bound. Use `npm run --silent start -- --help` for options.
+The last command serves MCP JSON-RPC on stdin/stdout and waits for an MCP client. Use `--purpose viewer` for nine read-only tools over the same database. Fixture Actors are `requester`, `owner`, `respondent`, and `outsider`. `--db` defaults to `:memory:`; a named database retains records between processes. These example flags select fixtures and do not authenticate real callers. No network port is bound. Use `npm run --silent start -- --help` for options.
 
 An MCP client can start the already-built entry point directly:
 
@@ -44,6 +44,7 @@ import { createActors, type ActorAuthority } from "@uniac/agentic-workspace/acto
 import { createWork } from "@uniac/agentic-workspace/work";
 import { createMessages } from "@uniac/agentic-workspace/messages";
 import { createForms } from "@uniac/agentic-workspace/forms";
+import { createStatus } from "@uniac/agentic-workspace/status";
 import { openSqlite } from "@uniac/agentic-workspace/persistence";
 
 function workspace(authority: ActorAuthority, admittedActorID: string, databasePath: string) {
@@ -55,16 +56,19 @@ function workspace(authority: ActorAuthority, admittedActorID: string, databaseP
     work,
     messages: createMessages(actors, store),
     forms: createForms(actors, store, work),
+    status: createStatus(actors, store),
     close: () => store.close(),
   };
 }
 ```
 
-`ActorAuthority.get(callerID, actorID)` and `.list(callerID, query)` own directory visibility and current canonical state. The required synchronous `.within(callerID, actorID, ancestorID): boolean` supplies inclusive retained ancestry, including closed members/anchors at every depth; unknown IDs return false. Bound `ActorsClient.within(actorID, ancestorID)` revalidates its actual active caller without resolving selected profiles or changing identity. Hosts must implement this method. The workspace stores no Actor rows, hierarchy or credentials. The optional root `bindWorkspace` factory performs the same explicit composition and returns four distinct clients. Contracts and errors are exported at `/contracts`; SDK server construction is exported at `/mcp`.
+`ActorAuthority.get(callerID, actorID)` and `.list(callerID, query)` own directory visibility and current canonical state. The required synchronous `.within(callerID, actorID, ancestorID): boolean` supplies inclusive retained ancestry, including closed members/anchors at every depth; unknown IDs return false. Bound `ActorsClient.within(actorID, ancestorID)` revalidates its actual active caller without resolving selected profiles or changing identity. Hosts must implement this method. The workspace stores no Actor rows, hierarchy or credentials. The optional root `bindWorkspace` factory performs the same explicit composition and returns five distinct clients. Contracts and errors are exported at `/contracts`; SDK server construction is exported at `/mcp`.
 
-Lists return `{items, next, actors}`: the page, an opaque position for the next page (null at the end) and the names of the Actors it mentions. Work and Form lists filter by status lists, one or several requesters, `updatedSince` and canonical subtrees (`ownerWithin`, `requesterWithin`, `respondentWithin`, `awaitingWithin`), and go newest first with `order: "recent"`. Records carry `updatedAt`; history comes only from `work_get`/`form_get` with `history: true`. See [lists](docs/contracts.md#lists).
+Lists return `{items, next, actors}`: the page, an opaque position for the next page (null at the end) and the names of the Actors it mentions. Work and Form lists filter by status lists, one or several requesters, `updatedSince` and canonical subtrees (`ownerWithin`, `requesterWithin`), and go newest first with `order: "recent"`. Records carry `updatedAt`; history comes only from a get with `history: true`. See [lists](docs/contracts.md#lists).
 
 Work is the unit of progress: a title, progress, links and what it waits on, owned and requested by the caller unless it names another owner. Work an Actor requested itself completes when it submits; other Work waits for its requester's review. See [Work](docs/contracts.md#work).
+
+An ask (a Form) is its asker's own output: a title, context, links and fields with options and a recommended choice. Any Actor answers it, and the first answer resolves it unless it collects answers; only the asker's managers answer an approval. Each Actor keeps one status: a line, a summary and links. See [asks](docs/contracts.md#asks) and [status](docs/contracts.md#status).
 
 Each Message belongs to its pair's conversation (`conversationID`) and carries its place in the one Message order (`seq`). `messages.list({counterpartyID, before:"latest", limit:20})` returns a conversation's newest window ascending, with `older` for the page before it; `messages.list({direction:"incoming", after})` reads an Actor's input across conversations, from a `next` position or the last `seq` it handled. See [Messages](docs/contracts.md#messages).
 

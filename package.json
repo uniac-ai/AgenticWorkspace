@@ -1,6 +1,6 @@
 {
   "name": "@uniac/agentic-workspace",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Durable Actor correspondence, work tracking, and forms with shared MCP interfaces",
@@ -31,6 +31,10 @@
     "./forms": {
       "types": "./dist/src/forms/index.d.ts",
       "default": "./dist/src/forms/index.js"
+    },
+    "./status": {
+      "types": "./dist/src/status/index.d.ts",
+      "default": "./dist/src/status/index.js"
     },
     "./persistence": {
       "types": "./dist/src/persistence/index.d.ts",
