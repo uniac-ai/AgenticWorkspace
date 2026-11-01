@@ -102,7 +102,7 @@ export const WorkContracts = {
   ),
   work_update: contract(
     "report",
-    "Owner edits title, progress, open/active/blocked status, links and waitsOn (null clears it); requester edits goal or owner with expectedRevision.",
+    "Owner edits title, progress, open/active/blocked status, links and waitsOn (null clears it); requester edits goal or owner with expectedRevision. Progress is a paragraph, then optionally a Markdown task list of steps: `- [x]` done, `- [ ]` not done.",
     mutation
       .extend({
         title: Title.optional(),

@@ -11,14 +11,27 @@ const MODULES = ["messages", "work", "forms"] as const;
 const UPGRADES: ((db: DatabaseSync) => void)[] = [
   // 0.5: Messages link no Work.
   (db) => db.exec("UPDATE messages SET data=json_remove(data,'$.workID')"),
-  // 0.5: Work has links, and accepted Work was completed when its review accepted it.
-  (db) =>
-    db.exec(`
-      UPDATE work SET data=json_set(data,'$.links',json('[]'));
-      UPDATE work SET data=json_set(data,'$.completedAt',json_extract(data,'$.review.at'))
-        WHERE json_extract(data,'$.status')='accepted';
-    `),
+  // 0.5: Work has a title from its goal and links, and accepted Work was completed when its review
+  // accepted it.
+  (db) => {
+    const update = db.prepare("UPDATE work SET data=? WHERE id=?");
+    for (const { id, data } of db.prepare("SELECT id,data FROM work").all()) {
+      const work = JSON.parse(String(data));
+      const completedAt = work.status === "accepted" ? work.review?.at : undefined;
+      update.run(
+        JSON.stringify({ ...work, title: headline(work.goal), links: [], completedAt }),
+        String(id),
+      );
+    }
+  },
 ];
+/** A title from existing text: its first line, cut at a word boundary to 120 characters. */
+function headline(text: string): string {
+  const line = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  if (line.length <= 120) return line;
+  const space = line.slice(0, 120).search(/\s\S*$/);
+  return `${(space > 0 ? line.slice(0, space) : line.slice(0, 119)).trimEnd()}…`;
+}
 
 /** One SQLite database; module tables and their history are committed together. */
 export function openSqlite(path: string): WorkspaceStore {
