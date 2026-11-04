@@ -56,13 +56,23 @@ export function activeActor(actors: ActorsClient, actorID: string): Actor {
   return actor;
 }
 /**
- * The Actor itself while it is open; once it is closed, its nearest open manager, or null. An Actor
- * the caller can't see counts as closed, so the walk goes on past it.
+ * The Actor itself while it is open; once it is closed, its nearest open manager, or null. This
+ * decides who holds rights, so an Actor the caller can't see is refused (`not_found`), never passed.
  */
 export function standIn(actors: ActorsClient, actorID: string): string | null {
+  return walk(actors, actorID, (at) => actors.get({ actorID: at }).state === "active");
+}
+/**
+ * As standIn, for reads that route asks: an Actor the caller can't see counts as closed, so the walk
+ * goes on past it. Never for authority.
+ */
+export function routedStandIn(actors: ActorsClient, actorID: string): string | null {
+  return walk(actors, actorID, (at) => visible(actors, at)?.state === "active");
+}
+function walk(actors: ActorsClient, actorID: string, open: (actorID: string) => boolean) {
   const seen = new Set<string>();
   for (let at: string | null = actorID; at !== null && !seen.has(at); at = actors.manager(at)) {
-    if (visible(actors, at)?.state === "active") return at;
+    if (open(at)) return at;
     seen.add(at);
   }
   return null;

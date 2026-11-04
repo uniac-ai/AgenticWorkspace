@@ -3,7 +3,7 @@
  * their own rows of the forms table; callers run each write inside the store's transaction.
  */
 import { randomUUID } from "node:crypto";
-import { type ActorsClient, standIn } from "../actors/index.js";
+import { type ActorsClient, routedStandIn, standIn } from "../actors/index.js";
 import {
   type AskClose,
   type AskInput,
@@ -194,10 +194,13 @@ export function raised(
     ),
   );
 }
-/** Where an Actor's asks route: its manager, or that manager's nearest open manager. */
-function above(actors: ActorsClient, actorID: string) {
+/**
+ * Where an Actor's asks route: its manager, or that manager's nearest open manager. Raising walks it
+ * strictly; only the routed read walks past Actors the caller can't see.
+ */
+function above(actors: ActorsClient, actorID: string, through = standIn) {
   const manager = actors.manager(actorID);
-  return manager === null ? null : standIn(actors, manager);
+  return manager === null ? null : through(actors, manager);
 }
 /** The Actor an open ask is routed to, from its last raiser or else its asker; null for none. */
 export function routeOf(actors: ActorsClient, row: FormState) {
@@ -214,7 +217,7 @@ export function routedTo(
 ) {
   return forms
     .values("route", { status: ["open"], requester })
-    .filter((origin) => above(actors, origin) === actorID);
+    .filter((origin) => above(actors, origin, routedStandIn) === actorID);
 }
 const CANCELLED = {
   submitted: "Cancelled with the Work's submission.",

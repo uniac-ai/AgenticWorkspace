@@ -1728,6 +1728,63 @@ test("canonical visibility, active callers and retained reads after counterparty
   );
 });
 
+test("rights never pass past an Actor the caller can't see; only the routed read walks past it", (t) => {
+  const f = fixture(t);
+  // outsider and owner report to the root, requester; respondent to owner; deep to respondent.
+  const template = f.rows.get("respondent");
+  assert.ok(template);
+  f.rows.set("deep", { ...template, actorID: "deep", name: "Deep" });
+  f.managers.set("deep", "respondent");
+  const question = { title: "Go?", fields: [{ name: "x", label: "Go?", required: true }] };
+  const requested = f.as("outsider").work.create({ title: "Outsider's request", ownerID: "owner" });
+  const sent = work(f.as("owner").work.submit({ ticketID: requested.ticketID, result: "Done" }));
+  const open = f.as("outsider").work.create({ title: "Outsider's other", ownerID: "owner" });
+  const own = f.as("outsider").work.create({ title: "Outsider's own" });
+  const outsiderAsk = ask(f.as("outsider").work.update({ ticketID: own.ticketID, ask: question }));
+  const deepWork = f.as("deep").work.create({ title: "Deep's own" });
+  const deepAsk = ask(f.as("deep").work.update({ ticketID: deepWork.ticketID, ask: question }));
+  // A host that hides one open Actor from every caller.
+  const hiding = (hidden: string, caller: string) =>
+    bindWorkspace(
+      {
+        get: (_caller, id) => (id === hidden ? undefined : f.rows.get(id)),
+        within: f.authority.within,
+        manager: f.authority.manager,
+      },
+      f.store,
+      caller,
+    ).work;
+  const root = hiding("outsider", "requester");
+  for (const write of [
+    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, goal: "Taken over" }),
+    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, ownerID: "respondent" }),
+    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, status: "cancelled" }),
+    () =>
+      root.update({
+        close: { askID: outsiderAsk.formID, status: "cancelled", resolution: "Mine" },
+      }),
+    () =>
+      root.answer({
+        askID: sent.submission?.submissionID ?? "",
+        answers: { verdict: "accepted" },
+      }),
+  ])
+    assert.throws(write, rejects("not_found"));
+  const manager = hiding("respondent", "owner");
+  assert.throws(() => manager.answer({ askID: deepAsk.formID, raise: true }), rejects("not_found"));
+  // The routed read alone counts the hidden respondent as closed and walks on to owner.
+  assert.deepEqual(
+    manager.asks({ routedTo: "owner" }).items.map((row) => row.formID),
+    [deepAsk.formID],
+  );
+  // Nothing above was written.
+  const read = f.as("outsider").work;
+  assert.equal(read.get({ ticketID: open.ticketID }).revision, 1);
+  assert.equal(work(read.get({ ticketID: requested.ticketID })).status, "submitted");
+  assert.equal(work(read.get({ askID: outsiderAsk.formID })).asks?.[0]?.status, "open");
+  assert.deepEqual(work(read.get({ askID: deepAsk.formID })).asks?.[0]?.raises, []);
+});
+
 test("lists name their Actors, go newest first and select by update time and several requesters", (t) => {
   const f = fixture(t);
   const created = ["requester", "outsider", "owner"].map((by, i) =>
