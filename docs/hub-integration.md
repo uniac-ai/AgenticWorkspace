@@ -8,6 +8,14 @@ Bind the actual admitted Actor ID to a canonical synchronous `ActorAuthority` an
 
 Implement canonical ancestry at its owner: retained Registry get/manager edges. Team's depth-limited open-report view and the active Directory cannot supply complete historical membership. Workspace stores no hierarchy, Actor kind, relationship edit or fallback registry. Its bound `ActorsClient.within(actorID, ancestorID)` validates ID criteria and revalidates the active caller before delegation, without selected-profile lookup or caller substitution.
 
+## Adopting 0.6
+
+0.6 changes the persistence interface; Hub's bindings change with it.
+
+- **Persistence.** `RecordTable.all()` is replaced by `where(filter)`. It returns the current snapshots, in cursor order, whose every filtered indexed column holds one of the listed values; `where({})` returns every row. `values(column, filter)` returns one column's distinct values among the rows a filter keeps. The `WorkspaceStore` types name each table's indexed columns.
+- **Upgrade.** `openSqlite` upgrades a 0.5 database (version 3) to version 4 on first open. The upgrade adds the indexed columns and rewrites no record; see [persistence](design.md#persistence-and-state-changes). Back up the home before the first start on 0.6.
+- **Subtree filters.** `ownerWithin` and `requesterWithin` call `ActorAuthority.within` once for each Actor the column holds, not once per row. Owner, requester and status lookups decode only the rows they select.
+
 ## Adopting 0.5
 
 0.5 changes the public contracts; Hub's bindings and stored-record checks change with it.

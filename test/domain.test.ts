@@ -16,6 +16,7 @@ import {
 import { createForms } from "../src/forms/index.js";
 import { bindWorkspace } from "../src/index.js";
 import { openSqlite } from "../src/persistence/index.js";
+import { createWork } from "../src/work/index.js";
 
 const rejects = (code: WorkspaceError["code"]) => (error: unknown) =>
   error instanceof WorkspaceError && error.code === code;
@@ -824,6 +825,64 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     ({ ticketID }) => f.as("outsider").work.get({ ticketID, history: true }).history?.length,
   );
   assert.deepEqual(histories, [2, 3]);
+});
+
+test("subtree filters read membership once per Actor, not once per row", (t) => {
+  const f = fixture(t);
+  const requester = f.as("requester");
+  for (let i = 0; i < 30; i++)
+    requester.work.create({ title: `Row ${i}`, ownerID: i % 2 === 0 ? "owner" : "outsider" });
+  requester.forms.create({ title: "Ask", fields: [{ name: "x", label: "X", required: true }] });
+  f.as("respondent").forms.create({
+    title: "Ask",
+    fields: [{ name: "x", label: "X", required: true }],
+  });
+  const within = f.authority.within;
+  let reads = 0;
+  f.authority.within = (...args) => {
+    reads++;
+    return within(...args);
+  };
+  assert.equal(requester.work.list({ ownerWithin: "owner", limit: 100 }).items.length, 15);
+  assert.equal(reads, 2);
+  reads = 0;
+  assert.equal(
+    requester.work.list({ ownerID: "owner", ownerWithin: "requester" }).items.length,
+    15,
+  );
+  assert.equal(reads, 1);
+  reads = 0;
+  assert.equal(requester.forms.list({ requesterWithin: "owner" }).items.length, 1);
+  assert.equal(requester.forms.list({ requesterWithin: "requester" }).items.length, 2);
+  assert.equal(reads, 4);
+});
+
+test("a subtree list reads up to the head it captured while another connection writes", (t) => {
+  const f = fixture(t);
+  const first = f.as("requester").work.create({ title: "Before the read", ownerID: "owner" });
+  const other = f.second();
+  const written: string[] = [];
+  const work = createWork(createActors(f.authority, "requester"), {
+    transaction: f.store.transaction,
+    work: {
+      ...f.store.work,
+      values(column, filter) {
+        const values = f.store.work.values(column, filter);
+        // A new owner's Work, then a known owner's, both committed before the rows are read.
+        for (const ownerID of ["respondent", "owner"])
+          written.push(other.work.create({ title: "During the read", ownerID }).ticketID);
+        return values;
+      },
+    },
+  });
+  assert.deepEqual(work.list({ ownerWithin: "requester" }).items, [first]);
+  assert.deepEqual(
+    f
+      .as("requester")
+      .work.list({ ownerWithin: "requester" })
+      .items.map((row) => row.ticketID),
+    [first.ticketID, ...written],
+  );
 });
 
 test("an ask is answered by any Actor and resolves on the first answer unless it collects", (t) => {

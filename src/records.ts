@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ActorsClient } from "./actors/index.js";
 import { type HistoryEntry, type List, requireThat, WorkspaceError } from "./contracts/common.js";
-import type { RecordTable, Snapshot } from "./persistence/index.js";
+import type { Filter, RecordTable, Snapshot } from "./persistence/index.js";
 
 export const now = () => new Date().toISOString();
 export type Published<T> = T & { revision: number; updatedAt: string; history?: HistoryEntry[] };
@@ -9,7 +9,11 @@ export type Published<T> = T & { revision: number; updatedAt: string; history?: 
 export function published<T>({ cursor: _cursor, ...record }: Snapshot<T>): Published<T> {
   return record as Published<T>;
 }
-export function recorded<T>(table: RecordTable<T>, id: string, history = false): Published<T> {
+export function recorded<T, C extends string>(
+  table: RecordTable<T, C>,
+  id: string,
+  history = false,
+): Published<T> {
   const item = table.get(id);
   requireThat(item, "not_found", "record not found");
   return history ? { ...published(item), history: table.history(id) } : published(item);
@@ -44,27 +48,34 @@ export function position(
   );
   return at;
 }
-/** Current upserts in update order, or most recent first, after every filter. */
-export function traverse<T>(
+/**
+ * Current upserts in update order, or most recent first, after every filter. Rows are read up to
+ * the module head captured first, so a write committed during the read waits for the next page.
+ */
+export function traverse<T, C extends string>(
   actors: ActorsClient,
-  table: RecordTable<T>,
+  table: RecordTable<T, C>,
   query: { after?: string | undefined; limit: number; order?: "recent" | undefined },
   scope: unknown,
+  indexed: { filter: Filter<C>; within: { [K in C]?: string | undefined } },
   visible: (row: Snapshot<T>) => boolean,
   mentions: (row: T) => (string | undefined)[],
 ): List<Published<T>> {
   const recent = query.order === "recent";
+  const head = table.head();
   const bound = query.after === undefined ? undefined : position(query.after, scope);
   requireThat(
-    bound === undefined || bound <= table.head(),
+    bound === undefined || bound <= head,
     "invalid_input",
     "position is beyond the module head",
   );
   const rows = table
-    .all()
+    .where(subtrees(actors, table, indexed.filter, indexed.within))
     .filter(
       (row) =>
-        (bound === undefined || (recent ? row.cursor < bound : row.cursor > bound)) && visible(row),
+        row.cursor <= head &&
+        (bound === undefined || (recent ? row.cursor < bound : row.cursor > bound)) &&
+        visible(row),
     );
   if (recent) rows.reverse();
   const items = rows.slice(0, query.limit);
@@ -74,6 +85,24 @@ export function traverse<T>(
     next: last && rows.length > items.length ? token(scope, last.cursor) : null,
     actors: names(actors, items.flatMap(mentions)),
   };
+}
+/**
+ * A filter whose subtree criteria are resolved to the Actors each party column holds among the
+ * rows the filter keeps: one membership read per Actor rather than per row.
+ */
+function subtrees<C extends string>(
+  actors: ActorsClient,
+  table: RecordTable<unknown, C>,
+  filter: Filter<C>,
+  within: { [K in C]?: string | undefined },
+): Filter<C> {
+  const resolved: Filter<C> = { ...filter };
+  for (const [column, anchor] of Object.entries<string | undefined>(within))
+    if (anchor !== undefined)
+      resolved[column as C] = table
+        .values(column as C, filter)
+        .filter((actorID) => actors.within(actorID, anchor));
+  return resolved;
 }
 /** Names of the Actors a page mentions; Actors the caller can't see are left out. */
 export function names(actors: ActorsClient, ids: Iterable<string | undefined>) {

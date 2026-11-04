@@ -75,7 +75,16 @@ export function createWork(
       const query = parse(WorkContracts.work_list.input, input);
       actors.get();
       const { after: _after, limit: _limit, ...filter } = query;
-      const requesters = query.requesterID === undefined ? undefined : [query.requesterID].flat();
+      const indexed = {
+        filter: {
+          owner: query.ownerID === undefined ? undefined : [query.ownerID],
+          requester: query.requesterID === undefined ? undefined : [query.requesterID].flat(),
+          // The status column holds a stored blocked as active: it selects a superset, and the
+          // status check below keeps the exact match.
+          status: query.status?.map((status) => (status === "blocked" ? "active" : status)),
+        },
+        within: { owner: query.ownerWithin, requester: query.requesterWithin },
+      };
       const waitedOn = (row: WorkState) =>
         row.waitsOn && "actorID" in row.waitsOn ? row.waitsOn.actorID : undefined;
       return traverse(
@@ -83,13 +92,9 @@ export function createWork(
         table,
         query,
         ["work", filter],
+        indexed,
         (row) =>
-          (query.ownerID === undefined || row.ownerID === query.ownerID) &&
-          (requesters === undefined || requesters.includes(row.requesterID)) &&
           (query.waitsOnActorID === undefined || waitedOn(row) === query.waitsOnActorID) &&
-          (query.ownerWithin === undefined || actors.within(row.ownerID, query.ownerWithin)) &&
-          (query.requesterWithin === undefined ||
-            actors.within(row.requesterID, query.requesterWithin)) &&
           (query.status === undefined || query.status.includes(row.status)) &&
           (query.updatedSince === undefined || row.updatedAt >= query.updatedSince),
         (row) => [row.requesterID, row.ownerID, row.review?.reviewerID, waitedOn(row)],

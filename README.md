@@ -2,7 +2,7 @@
 
 Durable private P2P messages, and organization-shared Work, asks and status for active admitted Actor clients. Five separate clients expose identity/discovery, Messages, Work tracking, Forms (asks) and Status. Execution and viewer MCP servers share their records and authority rules. Work/Form list filters select matching records before pagination; business write roles remain unchanged.
 
-This package composes with Hub's canonical Actor authority and trusted admission, including the synchronous canonical relationship predicate described in the [adapter checkpoint](docs/hub-integration.md). [Adopting 0.5](docs/hub-integration.md#adopting-05) lists what changed for hosts. The runnable example uses model-free fixture identities; it is not production admission.
+This package composes with Hub's canonical Actor authority and trusted admission, including the synchronous canonical relationship predicate described in the [adapter checkpoint](docs/hub-integration.md). [Adopting 0.6](docs/hub-integration.md#adopting-06) lists what changes for hosts. The runnable example uses model-free fixture identities; it is not production admission.
 
 ## Run
 

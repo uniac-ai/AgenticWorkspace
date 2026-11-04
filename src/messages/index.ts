@@ -79,7 +79,7 @@ export function createMessages(
         (query.direction === "all" ||
           (query.direction === "incoming" ? row.recipientID === caller : row.senderID === caller));
       const head = table.head();
-      const rows = table.all().filter((row) => row.cursor <= head && matches(row));
+      const rows = table.where({}).filter((row) => row.cursor <= head && matches(row));
       let items: Snapshot<MessageState>[];
       if (before !== undefined) {
         const bound = before === "latest" ? head + 1 : position(before, scope, "before");
