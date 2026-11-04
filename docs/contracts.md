@@ -1,51 +1,46 @@
 # Operations, roles and transitions
 
-Runtime request/record schemas and derived TypeScript types are maintained in [src/contracts](../src/contracts/index.ts). Requests are strict objects: extra fields, including caller identity fields, are rejected. IDs/text are trimmed and bounded. The admitted caller comes from trusted client construction. All clients require an active caller on every operation, including reads. Visibility is owned by canonical Actor authority. Work, Forms and Messages are shared within the admitted Hub organization. Record roles determine write permissions.
+Runtime request/record schemas and derived TypeScript types are maintained in [src/contracts](../src/contracts/index.ts). Requests are strict objects: extra fields, including caller identity fields, are rejected. IDs/text are trimmed and bounded. The admitted caller comes from trusted client construction. All clients require an active caller on every operation, including reads. Visibility is owned by canonical Actor authority. Work, its asks and Messages are shared within the admitted Hub organization. Record roles determine write permissions.
 
 ## Tool inventory
 
-Every successful write returns the resulting record: its stable ID, `revision` and `updatedAt`, the time of the write that produced the current revision. History comes only from `work_get` and `form_get` with `history: true`. Execution MCP exposes every row below. Viewer MCP exposes only reads. Actor lifecycle administration is outside this inventory.
+Every successful write returns the resulting record: its stable ID, `revision` and `updatedAt`, the time of the write that produced the current revision. History comes only from `work_get` with `history: true`, for the Work and each of its asks. Execution MCP exposes every row below. Viewer MCP exposes only reads. Actor lifecycle administration is outside this inventory.
 
 Each contract carries `level`, the smallest organization level that presents it. Report is one agent and its person; Team adds working with other Actors; Organization adds the lifecycle and the system, none of which is in this package. Each level contains the one before it. The tag selects what a client presents; it grants and refuses nothing.
 
-| Tool         | Level  | Input                                                                                                                                    | Purpose                                                |
-| ------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| message_send | Report | `{recipientID,text}`                                                                                                                     | Send into the pair's conversation                      |
-| message_get  | Team   | `{messageID}`                                                                                                                            | Read one message                                       |
-| message_list | Report | `{between:[id,id]\|counterpartyID\|of,before?:latest\|older,after?:next\|seq,limit?}`                                                    | Read a conversation, or list an Actor's conversations  |
-| work_create  | Report | `{title,goal?,ownerID?,links?,waitsOn?}`                                                                                                 | Create Work; caller requests it and owns it by default |
-| work_get     | Report | `{ticketID,history?}`                                                                                                                    | Read a ticket, including accepted work                 |
-| work_list    | Report | `{ownerID?,requesterID?:id\|id[],waitsOnActorID?,ownerWithin?,requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}` | Read matching shared tickets                           |
-| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|cancelled,links?,waitsOn?}`                           | Update at least one allowed field, or cancel           |
-| work_submit  | Report | `{ticketID,expectedRevision?,result,evidence?}`                                                                                          | Submit; self-requested Work completes                  |
-| work_answer  | Team   | `{askID,ticketID?,answers:{verdict:accepted\|changes_requested},note?}`                                                                  | Answer the current submission, by its ID               |
-| form_create  | Report | `{title,context?,links?,workID?,cause?,approval?,collect?,fields:[{name,label,required,options?:[{value,detail?}],recommended?}]}`       | Ask                                                    |
-| form_get     | Report | `{formID,history?}`                                                                                                                      | Read an ask                                            |
-| form_list    | Report | `{workID?,requesterID?:id\|id[],requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}`                               | Read matching shared asks                              |
-| form_respond | Team   | `{formID,expectedRevision?,answers:{field:value},note?}`                                                                                 | Answer an open ask                                     |
-| form_close   | Report | `{formID,expectedRevision,status:resolved\|cancelled,resolution}`                                                                        | The asker resolves or cancels its ask                  |
+| Tool         | Level  | Input                                                                                                                                         | Purpose                                                  |
+| ------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| message_send | Report | `{recipientID,text}`                                                                                                                          | Send into the pair's conversation                        |
+| message_get  | Team   | `{messageID}`                                                                                                                                 | Read one message                                         |
+| message_list | Report | `{between:[id,id]\|counterpartyID\|of,before?:latest\|older,after?:next\|seq,limit?}`                                                         | Read a conversation, or list an Actor's conversations    |
+| work_create  | Report | `{title,goal?,ownerID?,links?,waitsOn?}`                                                                                                      | Create Work; caller requests it and owns it by default   |
+| work_get     | Report | `{ticketID\|askID,history?}`                                                                                                                  | Read Work with all its asks, or a 0.5 ask with no Work   |
+| work_list    | Report | `{ownerID?,requesterID?:id\|id[],waitsOnActorID?,ownerWithin?,requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}`      | Read matching shared Work, each with its open asks       |
+| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|cancelled,links?,waitsOn?}`, `{ticketID,ask}` or `{close}` | Edit or cancel Work; ask on it; close an ask             |
+| work_submit  | Report | `{ticketID,expectedRevision?,result,evidence?}`                                                                                               | Submit; self-requested Work completes                    |
+| work_answer  | Team   | `{askID,ticketID?,answers?:{field:value},note?,raise?:true}`                                                                                  | Answer or raise an ask, or answer the current submission |
 
-A Form is an ask; the tools keep the `form_*` names.
+`work_get`, `work_update` and `work_answer` return the record the call reads or writes: Work, or an ask. An ask has `formID` and Work has `ticketID`, and each result schema is their union.
 
 ## Authority
 
 - Every active admitted Actor may read every message and every conversation. An Actor sends to any other active Actor, never to itself. A reply is another message in the same conversation. Messages have no read, delivery or handling state, and reading changes nothing.
 - Every active admitted Actor may get/list all organization Work, including history and accepted tickets. The requester edits goal and owner, cancels and answers the submission; once it is closed, its nearest open manager does. The current owner edits title, progress, status, links and waitsOn, and submits. Reassignment changes write roles and filter membership; it does not remove shared read access. New owner must be active.
-- Every active admitted Actor may get/list all organization asks and history, and may ask. Any active Actor may answer an open ask, except an approval, which only the asker's managers answer. Only the asker closes its ask. Answering and closing never change Work, and Form reads never consult Work. Active callers retain shared history reads when counterparties close.
+- Every active admitted Actor may read every ask and its history, with its Work. The Work's owner asks on it, except the root. Any active Actor may answer an open ask, except an approval, which only the asker's managers answer. The Actor an ask is routed to may raise it, except the root. The asker closes its ask; once it is closed, its nearest open manager does. Asking, answering, raising and closing never change the Work row. Active callers retain shared history reads when counterparties close.
 
 The host composes canonical Actor authority and a WorkspaceStore for one Hub organization. Public read does not construct an elevated identity or alter Actor visibility. List criteria do not select the caller or grant write authority.
 
 ## Lists
 
-`work_list`, `form_list` and `message_list` return `{items, next, actors}`. `actors` maps every Actor ID the page mentions to `{name}`, leaving out Actors the caller can't see. `next` is an opaque position, or null when the read observed no further matching rows. Pass it back as `after` with the same filters to continue; a position from another read, filter or order is refused with `invalid_input`. Work and Form records carry no position of their own.
+`work_list`, `message_list` and the hosts' `WorkClient.asks` return `{items, next, actors}`. `actors` maps every Actor ID the page mentions to `{name}`, leaving out Actors the caller can't see. `next` is an opaque position, or null when the read observed no further matching rows. Pass it back as `after` with the same filters to continue; a position from another read, filter or order is refused with `invalid_input`. Work and ask records carry no position of their own.
 
-Work and Form lists go in update order by default: a record moves to the end of that order whenever it changes. `order: "recent"` goes newest first. `updatedSince` keeps records whose `updatedAt` is at or after the given time, which is how a reader picks up changes since it last looked. Lists are current upserts, not snapshots: a record updated during a traversal can appear again later in update order, and a record that stops matching leaves no tombstone. Paging `order: "recent"` can skip a record that is updated between page reads, because the update moves it to the front, ahead of the pages already read. That suits a view that refetches its first page when records change; it is not a way to read every record. A reader that needs a complete current view pages in update order or lists again from the start, and reconciles IDs.
+Work and ask lists go in update order by default: a record moves to the end of that order whenever it changes. `work_list`'s `order: "recent"` goes newest first, and its `updatedSince` keeps records whose `updatedAt` is at or after the given time, which is how a reader picks up changes since it last looked. Lists are current upserts, not snapshots: a record updated during a traversal can appear again later in update order, and a record that stops matching leaves no tombstone. Paging `order: "recent"` can skip a record that is updated between page reads, because the update moves it to the front, ahead of the pages already read. That suits a view that refetches its first page when records change; it is not a way to read every record. A reader that needs a complete current view pages in update order or lists again from the start, and reconciles IDs.
 
-The page `limit` defaults to 50 and is at most 100. It bounds the returned rows, not the scan. Owner, requester, status and `workID` filters select rows through indexed columns, and the adapter decodes only the snapshots they keep. A subtree filter reads membership once for each Actor the column holds among the rows the other indexed filters keep, not once per row. The remaining filters then apply before the limit. A list reads the rows committed before it starts; a row committed during the read waits for the next one.
+The page `limit` defaults to 50 and is at most 100. It bounds the returned rows, not the scan. Owner, requester, status, Work and route filters select rows through indexed columns, and the adapter decodes only the snapshots they keep. A subtree filter reads membership once for each Actor the column holds among the rows the other indexed filters keep, not once per row. The remaining filters then apply before the limit. A list reads the rows committed before it starts; a row committed during the read waits for the next one. The open asks a `work_list` page carries are read after the page.
 
 ### Filters
 
-Work accepts `ownerID`, `requesterID`, `waitsOnActorID`, `status`, `ownerWithin`, `requesterWithin` and `updatedSince`. Forms accepts `workID`, `requesterID`, `status`, `requesterWithin` and `updatedSince`. All supplied filters intersect. `requesterID` takes one ID or a list, matching any of them; `status` takes a list of the module's status values, matching any of them. ID filters use exact equality; `waitsOnActorID` matches Work waiting on that Actor. Filter IDs do not trigger Actor lookup; unknown IDs yield empty matching sets. Omit filters to list all shared records.
+Work accepts `ownerID`, `requesterID`, `waitsOnActorID`, `status`, `ownerWithin`, `requesterWithin` and `updatedSince`. The hosts' `WorkClient.asks` accepts `requesterID`, `routedTo` (open asks routed to that Actor), `answeredBy` (asks with a response by that Actor) and `status`. All supplied filters intersect. `work_list`'s `requesterID` takes one ID or a list, matching any of them, and the asks read's takes one ID; `status` takes a list of the module's status values, matching any of them. ID filters use exact equality; `waitsOnActorID` matches Work waiting on that Actor. Filter IDs do not trigger Actor lookup, except `routedTo`, which walks each open ask's route through the host's `manager` and treats an Actor the caller can't see as closed; unknown IDs yield empty matching sets. Omit filters to list all shared records.
 
 Subtree criteria use the required host `ActorAuthority.within(callerID, actorID, ancestorID)`, which tests the named canonical position and every descendant through retained relationships, including closed Actors and closed anchors without a depth limit. Unknown members or anchors return false. Bound `ActorsClient.within(actorID, ancestorID)` revalidates the admitted caller and delegates membership without selected-profile lookup or caller substitution.
 
@@ -93,17 +88,36 @@ Once the requester is closed, its rights pass to its nearest open manager: the f
 
 ## Asks
 
-An ask is its asker's own output: it names no one to answer it. It holds:
+An ask is part of the Work its asker owns: `work_update {ticketID, ask}` asks on it, and returns the new ask. The ask names no one to answer it. It holds:
 - `title` (at most 120 characters), optional `context` and `links`;
 - `fields`: each has a `name`, a `label` and `required`, and may have `options`, each `{value, detail?}`, and the asker's `recommended` value among them. A one-field ask with options is a decision; without options, a question;
-- optional `workID`, the existing shared Work it blocks, and `cause`, the existing ask of a report that this ask carries up;
-- `approval` and `collect`, both false by default.
+- `workID`, the Work it is on;
+- `approval` and `collect`, both false by default;
+- `responses`, one per responder, and `raises`, `{actorID, at}` for each Actor that passed it up, in order;
+- `status` (`open`, `resolved` or `cancelled`), and a `resolution` once closed.
 
-Any active Actor may answer an open ask with `form_respond`: a complete answer set, where required fields are nonblank, every named field exists and a choice matches an option, and an optional `note`. The response is recorded under its responder with the time it was given; a responder that answers again replaces its own response, and history keeps every earlier one. The first answer resolves the ask. An ask with `collect` stays open for more answers until its asker closes it. `expectedRevision` is optional on an answer: an answer to a resolved ask conflicts, and answers to a collecting ask don't overwrite each other.
+The record keeps its Form field names (`formID`, `requesterID` for the asker) until the wire takes the model's words; arguments name it `askID`. Only the Work's owner asks, on Work that is open, active or changes requested, and the root doesn't ask. An ask is stored in its own row, so asking, answering and closing never move the Work's revision.
 
-An `approval` ask authorizes something that can't be undone, so only the asker's strict ancestors answer it: its managers up to the root, never the asker itself. The Workspace tests this with the host's `within` relation, so it needs no root identity. The root's own approvals have no one above to answer them; the asker closes them, as it does to record an answer its person gave in its session.
+**Reads.** `work_get {ticketID}` returns the Work with `asks`: all of them, open and closed, in the order they were asked (asks made in the same millisecond keep update order). `work_get {askID}` returns the Work an ask is on, the same way, and the current submission's ID returns its Work. A 0.5 ask that named no Work is returned alone. `work_list` items carry their open asks. Write results carry no `asks`.
 
-The asker closes its open ask with `form_close`, with `expectedRevision`, as `resolved` with a `resolution` (ending a collection, or recording an answer given elsewhere) or `cancelled`. A closed ask doesn't change again.
+**Answering.** Any active Actor answers an open ask with `work_answer {askID, answers, note?}`: a complete answer set, where required fields are nonblank, every named field exists and a choice matches an option. The response is recorded under its responder with the time it was given. A responder that answers again replaces its own response, and history keeps every earlier one. The first answer resolves the ask; an ask with `collect` stays open for more answers until its asker closes it. An answer to a closed ask conflicts.
+
+An `approval` ask authorizes something that can't be undone, so only the asker's strict ancestors answer it: its managers up to the root, never the asker itself. The Workspace tests this with the host's `within` relation, so it needs no root identity.
+
+**Routing and raising.** An open ask is routed to its asker's manager; once raised, to its last raiser's manager. A closed manager is skipped for its nearest open one. Nothing stores a destination: it is derived from the asker, the raises and the tree. The Actor an ask is routed to may raise it with `work_answer {askID, raise: true}`, except the root, which has no manager. A raise adds `{actorID, at}` to `raises`, keeps the ask open and routes it one manager up. It never resolves the ask, and a later answer by the raiser doesn't remove it.
+
+**Closing.** The asker closes its open ask with `work_update {close: {askID, status, resolution}}`, as `resolved` with a `resolution` (ending a collection, or recording an answer given elsewhere) or `cancelled`. Once the asker is closed, its nearest open manager closes it. It takes no `expectedRevision`, and a closed ask refuses a second close. Answering and closing work on frozen Work too.
+
+**When Work moves on.** Submitting, cancelling or reassigning Work cancels its open asks, since their asker no longer moves it. Each gets `status: cancelled` and a `resolution` with a fixed `text` and a `reason`: `submitted`, `cancelled` or `reassigned`. Its history entry is by the Actor who moved the Work, at the same time. A new ask on submitted, accepted or cancelled Work is refused.
+
+**Asks from 0.5.** They read as stored: an ask with no Work is read, answered and closed by its ID, an ask by another Actor shows under the Work it names, and an ask left open on submitted Work is still answered and closed. A 0.5 ask's `cause` stays stored and unread, and it reads with `raises: []`. Its next write stores it without `cause`; history keeps it.
+
+**Hosts' reads.** `WorkClient.asks({requesterID?, routedTo?, answeredBy?, status?, after?, limit?})` is not a tool. It lists asks wherever they are: an asker's own, those routed to an Actor, and those an Actor answered. 0.5 asks with no Work are included.
+
+**History.** These action names are part of the contract, since hosts label what changed by them.
+- **An ask's history:** `created` (asked), `responded` (answered), `raised`, `resolved` (closed as resolved) and `cancelled` (closed as cancelled by its asker or stand-in, or by Q12).
+- **Q12's cancellations:** only these carry `resolution.reason`.
+- **A Work's history:** `created`, `updated` (every edit, a cancel included), `submitted` and `reviewed` (the answer to a submission).
 
 ## Errors and protocol
 

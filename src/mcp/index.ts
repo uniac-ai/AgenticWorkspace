@@ -8,7 +8,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
-  FormContracts,
   MessageContracts,
   parse,
   requireThat,
@@ -30,7 +29,7 @@ function bind<S extends z.ZodType>(
   return { ...spec, run: (input: unknown) => parse(spec.output, run(parse(spec.input, input))) };
 }
 export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose): Server {
-  const { actors, messages, work, forms } = clients;
+  const { actors, messages, work } = clients;
   const operations = {
     message_send: bind(MessageContracts.message_send, (input) => messages.send(input)),
     message_get: bind(MessageContracts.message_get, (input) => messages.get(input)),
@@ -41,11 +40,6 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
     work_update: bind(WorkContracts.work_update, (input) => work.update(input)),
     work_submit: bind(WorkContracts.work_submit, (input) => work.submit(input)),
     work_answer: bind(WorkContracts.work_answer, (input) => work.answer(input)),
-    form_create: bind(FormContracts.form_create, (input) => forms.create(input)),
-    form_get: bind(FormContracts.form_get, (input) => forms.get(input)),
-    form_list: bind(FormContracts.form_list, (input) => forms.list(input)),
-    form_respond: bind(FormContracts.form_respond, (input) => forms.respond(input)),
-    form_close: bind(FormContracts.form_close, (input) => forms.close(input)),
   };
   const server = new Server(
     { name: `agentic-workspace-${purpose}`, version: "0.5.0" },
@@ -64,7 +58,11 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
               type: "object";
               [key: string]: unknown;
             },
-            outputSchema: z.toJSONSchema(op.output) as { type: "object"; [key: string]: unknown },
+            // A result that is one of two records is an anyOf, which MCP still types as an object.
+            outputSchema: { type: "object", ...z.toJSONSchema(op.output) } as {
+              type: "object";
+              [key: string]: unknown;
+            },
             annotations: { readOnlyHint: !op.writes, openWorldHint: false },
           })),
       };

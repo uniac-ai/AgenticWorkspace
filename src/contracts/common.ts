@@ -38,6 +38,7 @@ export interface List<T> {
   actors: z.infer<typeof Actors>;
 }
 export type Input<S extends z.ZodType> = z.input<S>;
+export type Output<S extends z.ZodType> = z.output<S>;
 
 export class WorkspaceError extends Error {
   constructor(

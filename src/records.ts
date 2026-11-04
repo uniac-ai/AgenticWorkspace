@@ -18,6 +18,23 @@ export function recorded<T, C extends string>(
   requireThat(item, "not_found", "record not found");
   return history ? { ...published(item), history: table.history(id) } : published(item);
 }
+/** A table whose reads pass each current snapshot through `read`, as the module reads it. */
+export function readThrough<T, C extends string>(
+  table: RecordTable<T, C>,
+  read: (row: Snapshot<T>) => Snapshot<T>,
+): RecordTable<T, C> {
+  return {
+    get: (id) => {
+      const row = table.get(id);
+      return row && read(row);
+    },
+    where: (filter) => table.where(filter).map(read),
+    values: (column, filter) => table.values(column, filter),
+    history: (id) => table.history(id),
+    head: () => table.head(),
+    save: (id, data, event, expectedRevision) => table.save(id, data, event, expectedRevision),
+  };
+}
 /** The module state alone, for writing the next revision. */
 export function stateOf<T>(row: Published<T>): T {
   const { revision: _revision, updatedAt: _updatedAt, history: _history, ...state } = row;
@@ -50,14 +67,15 @@ export function position(
 }
 /**
  * Current upserts in update order, or most recent first, after every filter. Rows are read up to
- * the module head captured first, so a write committed during the read waits for the next page.
+ * the module head captured first, and the indexed filter is selected after it, so a write
+ * committed during the read waits for the next page.
  */
 export function traverse<T, C extends string>(
   actors: ActorsClient,
   table: RecordTable<T, C>,
   query: { after?: string | undefined; limit: number; order?: "recent" | undefined },
   scope: unknown,
-  indexed: { filter: Filter<C>; within: { [K in C]?: string | undefined } },
+  indexed: () => Filter<C>,
   visible: (row: Snapshot<T>) => boolean,
   mentions: (row: T) => (string | undefined)[],
 ): List<Published<T>> {
@@ -70,7 +88,7 @@ export function traverse<T, C extends string>(
     "position is beyond the module head",
   );
   const rows = table
-    .where(subtrees(actors, table, indexed.filter, indexed.within))
+    .where(indexed())
     .filter(
       (row) =>
         row.cursor <= head &&
@@ -90,7 +108,7 @@ export function traverse<T, C extends string>(
  * A filter whose subtree criteria are resolved to the Actors each party column holds among the
  * rows the filter keeps: one membership read per Actor rather than per row.
  */
-function subtrees<C extends string>(
+export function subtrees<C extends string>(
   actors: ActorsClient,
   table: RecordTable<unknown, C>,
   filter: Filter<C>,

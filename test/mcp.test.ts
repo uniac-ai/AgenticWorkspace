@@ -23,20 +23,8 @@ const executionNames = [
   "work_update",
   "work_submit",
   "work_answer",
-  "form_create",
-  "form_get",
-  "form_list",
-  "form_respond",
-  "form_close",
 ];
-const viewerNames = [
-  "message_get",
-  "message_list",
-  "work_get",
-  "work_list",
-  "form_get",
-  "form_list",
-];
+const viewerNames = ["message_get", "message_list", "work_get", "work_list"];
 
 async function call<T>(
   client: Client,
@@ -56,7 +44,7 @@ async function refused(client: Client, name: string, args: Record<string, unknow
   assert.equal(JSON.parse(errorText).code, code);
 }
 
-test("SDK execution/viewer discovery and all 14 calls share records and enforce domain authority", async (t) => {
+test("SDK execution/viewer discovery and all 9 calls share records and enforce domain authority", async (t) => {
   const store = openSqlite(":memory:");
   const { authority } = fixtureAuthority();
   const connections: { client: Client; server: ReturnType<typeof createMcpServer> }[] = [];
@@ -81,6 +69,9 @@ test("SDK execution/viewer discovery and all 14 calls share records and enforce 
   const viewer = await connect("requester", "viewer");
   const outsider = await connect("outsider", "execution");
   const tools = (await requester.listTools()).tools;
+  // A client validates results only for tools it has listed.
+  await owner.listTools();
+  await outsider.listTools();
   assert.deepEqual(tools.map((tool) => tool.name).sort(), [...executionNames].sort());
   const viewedTools = (await viewer.listTools()).tools;
   assert.deepEqual(viewedTools.map((tool) => tool.name).sort(), [...viewerNames].sort());
@@ -120,39 +111,39 @@ test("SDK execution/viewer discovery and all 14 calls share records and enforce 
   for (const removed of ["message_acknowledge", "message_handle"])
     for (const client of [owner, viewer])
       await refused(client, removed, { messageID: message.messageID }, "not_found");
-  const form = await call<Form>(requester, "form_create", {
-    title: "Proceed?",
-    collect: true,
-    fields: [{ name: "answer", label: "Proceed?", required: true }],
+  const form = await call<Form>(owner, "work_update", {
+    ticketID: ticket.ticketID,
+    ask: {
+      title: "Proceed?",
+      collect: true,
+      fields: [{ name: "answer", label: "Proceed?", required: true }],
+    },
   });
-  assert.equal(
-    (
-      await call<List<Form>>(outsider, "form_list", {
-        requesterWithin: "requester",
-        status: ["open"],
-      })
-    ).items[0]?.formID,
-    form.formID,
+  assert.equal(form.workID, ticket.ticketID);
+  assert.deepEqual(
+    (await call<List<Work>>(outsider, "work_list", { ownerID: "owner" })).items[0]?.asks,
+    [form],
   );
-  await call(owner, "form_respond", {
-    formID: form.formID,
+  await call(outsider, "work_answer", {
+    askID: form.formID,
     answers: { answer: "yes" },
     note: "Over MCP",
   });
-  const changed = await call<Form>(viewer, "form_get", { formID: form.formID });
-  assert.deepEqual(changed.responses.owner?.answers, { answer: "yes" });
-  assert.equal(changed.responses.owner?.note, "Over MCP");
-  assert.equal((await call<List<Form>>(viewer, "form_list")).items.length, 1);
-  assert.equal(Object.hasOwn(form, "workID"), false);
+  const changed = (await call<Work>(viewer, "work_get", { askID: form.formID })).asks?.[0];
+  assert.deepEqual(changed?.responses.outsider?.answers, { answer: "yes" });
+  assert.equal(changed?.responses.outsider?.note, "Over MCP");
   await refused(outsider, "work_list", { ownerWithin: 42 }, "invalid_input");
-  const formProperties = tools.find((tool) => tool.name === "form_create")?.inputSchema;
-  assert.ok(formProperties);
-  assert.deepEqual(formProperties.required, ["title", "fields"]);
-  await call(requester, "form_close", {
-    formID: form.formID,
-    expectedRevision: changed.revision,
-    status: "resolved",
-    resolution: "Answers recorded",
+  const updateSchema = tools.find((tool) => tool.name === "work_update")?.inputSchema;
+  assert.equal(updateSchema?.type, "object");
+  for (const form of ["ask", "close"])
+    assert.ok(Object.hasOwn(updateSchema?.properties ?? {}, form));
+  for (const name of ["work_get", "work_update", "work_answer"]) {
+    const output = tools.find((tool) => tool.name === name)?.outputSchema;
+    assert.equal(output?.type, "object");
+    assert.equal(Array.isArray(output?.anyOf), true);
+  }
+  await call(owner, "work_update", {
+    close: { askID: form.formID, status: "resolved", resolution: "Answers recorded" },
   });
   const update = await call<Work>(owner, "work_update", {
     ticketID: ticket.ticketID,
@@ -200,24 +191,14 @@ test("SDK execution/viewer discovery and all 14 calls share records and enforce 
     ).items[0]?.ticketID,
     ticket.ticketID,
   );
-  assert.equal(
-    (await call<Form>(outsider, "form_get", { formID: form.formID })).status,
-    "resolved",
-  );
-  assert.equal(
-    (
-      await call<List<Form>>(outsider, "form_list", {
-        requesterID: ["requester"],
-        requesterWithin: "requester",
-        status: ["resolved"],
-      })
-    ).items.length,
-    1,
+  assert.deepEqual(
+    (await call<Work>(outsider, "work_get", { askID: form.formID })).asks?.map((row) => row.status),
+    ["resolved"],
   );
   await refused(
     outsider,
-    "form_respond",
-    { formID: form.formID, answers: { answer: "yes" } },
+    "work_answer",
+    { askID: form.formID, answers: { answer: "yes" } },
     "conflict",
   );
   assert.deepEqual(await call(outsider, "message_get", { messageID: message.messageID }), message);
@@ -234,7 +215,15 @@ test("SDK execution/viewer discovery and all 14 calls share records and enforce 
   const blockedText = (blocked.content as { type: string; text: string }[])[0]?.text ?? "";
   assert.equal(JSON.parse(blockedText).code, "invalid_input");
   assert.match(JSON.parse(blockedText).message, /^status: blocked is gone: ask on the Work/);
-  await refused(requester, "work_review", {}, "not_found");
+  for (const removed of [
+    "work_review",
+    "form_create",
+    "form_get",
+    "form_list",
+    "form_respond",
+    "form_close",
+  ])
+    await refused(requester, removed, {}, "not_found");
   await refused(
     owner,
     "message_send",
@@ -335,7 +324,7 @@ for (const purpose of ["execution", "viewer"] as const) {
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(a);
     await client.connect(b);
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 14 : 6);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 9 : 4);
     failing = true;
     await assert.rejects(
       () => client.listTools(),
@@ -356,7 +345,7 @@ for (const purpose of ["execution", "viewer"] as const) {
     assert.equal(callError.isError, true);
     assert.equal(JSON.stringify(callError).includes(sentinel), false);
     failing = false;
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 14 : 6);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 9 : 4);
     const actor = fixture.rows.get("requester");
     assert.ok(actor);
     fixture.rows.set("requester", { ...actor, state: "closed" });
@@ -377,18 +366,14 @@ test("npm start target serves SDK stdio across independent processes and durable
   const dir = mkdtempSync(join(tmpdir(), "workspace-stdio-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const db = join(dir, "fixture.sqlite");
-  async function session(purpose: McpPurpose, action: (client: Client) => Promise<void>) {
+  async function session(
+    actor: string,
+    purpose: McpPurpose,
+    action: (client: Client) => Promise<void>,
+  ) {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [
-        resolve("dist/examples/stdio.js"),
-        "--actor",
-        "requester",
-        "--purpose",
-        purpose,
-        "--db",
-        db,
-      ],
+      args: [resolve("dist/examples/stdio.js"), "--actor", actor, "--purpose", purpose, "--db", db],
       stderr: "pipe",
     });
     const client = new Client({ name: "stdio-consumer", version: "1" });
@@ -401,18 +386,35 @@ test("npm start target serves SDK stdio across independent processes and durable
     }
   }
   let id = "";
-  await session("execution", async (client) => {
+  let askID = "";
+  await session("requester", "execution", async (client) => {
     const ticket = await call<Work>(client, "work_create", {
       title: "Reopen stdio database",
       ownerID: "owner",
     });
     id = ticket.ticketID;
   });
-  await session("viewer", async (client) => {
-    assert.equal((await client.listTools()).tools.length, 6);
-    assert.equal(
-      (await call<Work>(client, "work_get", { ticketID: id })).title,
-      "Reopen stdio database",
+  // Each client lists its tools first, so the SDK validates every result against its schema.
+  await session("owner", "execution", async (client) => {
+    await client.listTools();
+    const question = {
+      title: "Reopen?",
+      fields: [{ name: "x", label: "Reopen?", required: true }],
+    };
+    askID = (await call<Form>(client, "work_update", { ticketID: id, ask: question })).formID;
+  });
+  await session("requester", "execution", async (client) => {
+    await client.listTools();
+    const answered = await call<Form>(client, "work_answer", { askID, answers: { x: "yes" } });
+    assert.equal(answered.status, "resolved");
+  });
+  await session("requester", "viewer", async (client) => {
+    assert.equal((await client.listTools()).tools.length, 4);
+    const read = await call<Work>(client, "work_get", { askID });
+    assert.equal(read.title, "Reopen stdio database");
+    assert.deepEqual(
+      read.asks?.map((row) => [row.formID, row.status]),
+      [[askID, "resolved"]],
     );
     await refused(client, "work_create", { title: "Viewer write", ownerID: "owner" }, "forbidden");
   });

@@ -40,8 +40,7 @@ import { bindWorkspace } from '@uniac/agentic-workspace';
 import { createActors, type ActorAuthority } from '@uniac/agentic-workspace/actors';
 import { createWork } from '@uniac/agentic-workspace/work';
 import { createMessages } from '@uniac/agentic-workspace/messages';
-import { createForms } from '@uniac/agentic-workspace/forms';
-import { Work, Actor, ActorQuery, Message, MessageContracts, WorkspaceError } from '@uniac/agentic-workspace/contracts';
+import { Work, Form, Actor, ActorQuery, Message, MessageContracts, WorkspaceError } from '@uniac/agentic-workspace/contracts';
 import { openSqlite } from '@uniac/agentic-workspace/persistence';
 import { createMcpServer } from '@uniac/agentic-workspace/mcp';
 const actor: Actor = {actorID:'self',name:'Consumer',purpose:'Public exports proof',state:'active'};
@@ -114,23 +113,27 @@ try {
     MessageContracts.message_handle;
   }
   publicTypes(direct);
-  const forms = createForms(actors,store);
   const ticket = Work.parse(work.create({title:'Consume exported clients',ownerID:'self'}));
-  const form = forms.create({title:'Ready?',collect:true,fields:[{name:'answer',label:'Ready?',required:true,options:[{value:'yes'},{value:'no',detail:'Not yet'}],recommended:'yes'}]});
-  assert.equal(Object.hasOwn(form,'workID'),false);
-  const peerForms = createForms(createActors(authority,'peer'),store);
-  const answered = peerForms.respond({formID:form.formID,expectedRevision:1,answers:{answer:'yes'}});
-  const closed = forms.close({formID:form.formID,expectedRevision:answered.revision,status:'resolved',resolution:'Agreed'});
+  // The root, self, doesn't ask; its report peer asks on Work it owns.
+  const peerWork = createWork(createActors(authority,'peer'),store);
+  const peerTicket = Work.parse(peerWork.create({title:'Peer work'}));
+  const ask = (input: object) => Form.parse(peerWork.update({ticketID:peerTicket.ticketID,ask:input as never}));
+  const form = ask({title:'Ready?',collect:true,fields:[{name:'answer',label:'Ready?',required:true,options:[{value:'yes'},{value:'no',detail:'Not yet'}],recommended:'yes'}]});
+  assert.equal(form.workID,peerTicket.ticketID);
+  Form.parse(work.answer({askID:form.formID,answers:{answer:'yes'}}));
+  const closed = Form.parse(peerWork.update({close:{askID:form.formID,status:'resolved',resolution:'Agreed'}}));
   assert.equal(closed.status,'resolved');
-  const pending = bindWorkspace(authority,store,'peer').forms.create({workID:ticket.ticketID,title:'Optional',fields:[{name:'answer',label:'Optional',required:false}]});
-  const approval = bindWorkspace(authority,store,'peer').forms.create({title:'Approve?',approval:true,fields:[{name:'answer',label:'Approve?',required:true}]});
+  const pending = ask({title:'Optional',fields:[{name:'answer',label:'Optional',required:false}]});
+  const approval = ask({title:'Approve?',approval:true,fields:[{name:'answer',label:'Approve?',required:true}]});
   const clients = bindWorkspace(authority,store,'observer');
   assert.equal(clients.actors.within('peer','self'),true);
   assert.equal(clients.actors.within('self','peer'),false);
-  assert.deepEqual(clients.work.list({ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:['open']}).items,[ticket]);
-  assert.deepEqual(clients.work.list({ownerWithin:'peer'}).items,[]);
-  assert.deepEqual(clients.forms.list({workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',status:['open']}).items,[pending]);
-  assert.deepEqual(clients.forms.list({requesterWithin:'absent'}).items,[]);
+  assert.deepEqual(clients.work.list({ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:['open']}).items,[{...ticket,asks:[]}]);
+  assert.deepEqual(clients.work.list({ownerWithin:'observer'}).items,[]);
+  assert.deepEqual(clients.work.list({ownerWithin:'peer'}).items.map(item=>item.asks?.length),[2]);
+  assert.deepEqual(clients.work.asks({requesterID:'peer',status:['open']}).items,[pending,approval]);
+  assert.deepEqual(clients.work.asks({routedTo:'self'}).items,[pending,approval]);
+  assert.deepEqual(clients.work.asks({routedTo:'peer'}).items,[]);
   for (const purpose of ['execution','viewer'] as const) {
     const server = createMcpServer(clients,purpose);
     const client = new Client({name:'installed-package-consumer',version:'1'});
@@ -138,17 +141,14 @@ try {
     try {
       await server.connect(a); await client.connect(b);
       const tools = (await client.listTools()).tools;
-      assert.equal(tools.length,purpose==='execution'?14:6);
-      const formTool = tools.find(tool=>tool.name==='form_get');
-      assert.equal(formTool?.outputSchema?.required?.includes('workID'),false);
-      const formRead = await client.callTool({name:'form_get',arguments:{formID:form.formID}});
-      assert.deepEqual(formRead.structuredContent,closed);
+      assert.equal(tools.length,purpose==='execution'?9:4);
+      assert.equal(tools.find(tool=>tool.name==='work_get')?.outputSchema?.type,'object');
+      const formRead = await client.callTool({name:'work_get',arguments:{askID:form.formID}});
+      assert.deepEqual((formRead.structuredContent as {asks:unknown[]}).asks,[closed,pending,approval]);
       const workRead = await client.callTool({name:'work_list',arguments:{ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:['open'],limit:1}});
-      assert.deepEqual((workRead.structuredContent as {items:unknown[]}).items,[ticket]);
-      const awaiting = await client.callTool({name:'form_list',arguments:{workID:ticket.ticketID,requesterID:'peer',requesterWithin:'self',status:['open'],limit:1}});
-      assert.deepEqual((awaiting.structuredContent as {items:unknown[]}).items,[pending]);
+      assert.deepEqual((workRead.structuredContent as {items:unknown[]}).items,[{...ticket,asks:[]}]);
       if (purpose==='execution') {
-        const denied = await client.callTool({name:'form_respond',arguments:{formID:approval.formID,answers:{answer:'yes'}}});
+        const denied = await client.callTool({name:'work_answer',arguments:{askID:approval.formID,answers:{answer:'yes'}}});
         assert.equal(JSON.parse((denied.content as {text:string}[])[0]!.text).code,'forbidden');
       }
       assert.deepEqual(tools.filter(tool=>tool.name.startsWith('message_')).map(tool=>tool.name).sort(),purpose==='execution'?['message_get','message_list','message_send']:['message_get','message_list']);
@@ -178,7 +178,7 @@ try {
       assert.equal(JSON.parse((listed.content as {text:string}[])[0]!.text).code,'invalid_input');
     } finally {await client.close(); await server.close();}
   }
-  console.log(JSON.stringify({title:clients.work.get({ticketID:ticket.ticketID}).title,messages:messages.list({counterpartyID:'peer'}).items.length,forms:forms.list().items.length}));
+  console.log(JSON.stringify({title:clients.work.get({ticketID:ticket.ticketID}).title,messages:messages.list({counterpartyID:'peer'}).items.length,asks:clients.work.asks().items.length}));
 } finally {store.close();}
 `,
     );
@@ -205,13 +205,13 @@ try {
         stdio: ["ignore", "pipe", "pipe"],
       }),
     );
-    assert.deepEqual(result, { title: "Consume exported clients", messages: 2, forms: 3 });
+    assert.deepEqual(result, { title: "Consume exported clients", messages: 2, asks: 3 });
     const installed = JSON.parse(
       readFileSync(join(dir, "node_modules/@uniac/agentic-workspace/package.json"), "utf8"),
     );
     assert.equal(installed.private, true);
     assert.equal(installed.version, "0.5.0");
-    assert.equal(Object.keys(installed.exports).length, 8);
+    assert.equal(Object.keys(installed.exports).length, 7);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
