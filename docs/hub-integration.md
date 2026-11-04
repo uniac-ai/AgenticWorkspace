@@ -28,12 +28,12 @@ This build changes the public contracts and the persistence interface from the l
   - **Answering and raising:** any active Actor answers with `work_answer {askID, answers, note?}`, an approval only the asker's strict managers. `{askID, raise: true}` raises it: only the Actor it is routed to, never the root. A raise appends `{actorID, at}` to `raises`.
   - **Reads:**
     - `work_get {ticketID | askID}` returns the Work with all its `asks`; an older ask that names no Work is returned alone. The current submission's ID returns its Work.
-    - `work_list` items carry their open asks, an older ask by another Actor included. So "waiting" (model §3) counts only asks whose `requesterID` is the Work's `ownerID`.
+    - `work_list` items carry their open asks, an older ask by another Actor included. So a host that shows Work as waiting on its owner's ask counts only asks whose `requesterID` is the Work's `ownerID`.
     - Write results carry no `asks`.
   - **Results:** `work_get`, `work_update` and `work_answer` return `Work | Form`. Their output schemas are unions with `type: "object"` at the top; a host projecting the contracts to JSON Schema must add that `type` too, since MCP clients refuse an output schema without it. Tell the records apart by `ticketID` and `formID`.
-  - **Q12:** submitting, cancelling or reassigning Work cancels its open asks, each with `resolution.reason` (`submitted`, `cancelled` or `reassigned`).
+  - **Cancelling open asks:** submitting, cancelling or reassigning Work cancels its open asks, each with `resolution.reason` (`submitted`, `cancelled` or `reassigned`).
   - **Hosts' read:** `WorkClient.asks({requesterID?, routedTo?, answeredBy?, status?, after?, limit?})` lists asks wherever they are: an Actor's own (`status: ["open"]` for the open ones), those routed to an Actor (raises included), and those an Actor answered. It is not a tool, and it replaces the 100-ID `requesterID` list for a manager's needs.
-  - **Asks stored before asks lived on Work:** they read as stored, without `cause` and with `raises: []`. A write on one (an answer, a close, Q12) stores it without `cause`; history keeps it.
+  - **Asks stored before asks lived on Work:** they read as stored, without `cause` and with `raises: []`. A write on one (an answer, a close, or a cancel when its Work moves on) stores it without `cause`; history keeps it.
   - **History action names** on asks and Work, and `resolution.reason`, are contract; see [asks](contracts.md#asks).
 - **Tools.** The execution server exposes 9 tools and the viewer 4.
 - **Subtree filters.** `ownerWithin` and `requesterWithin` call `ActorAuthority.within` once for each Actor the column holds, not once per row. Owner, requester and status lookups decode only the rows they select.

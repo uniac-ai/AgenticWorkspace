@@ -57,8 +57,8 @@ export function createMessages(
   function conversations(of: string, after: string | undefined, limit: number) {
     const scope = ["messages", "of", of];
     const head = table.head();
-    // Keyed by counterparty; a self message stored before they were refused is the Actor's
-    // conversation with itself.
+    // Keyed by counterparty; a self message stored before self messages were refused is the
+    // Actor's conversation with itself.
     const latest = new Map<string, Snapshot<MessageState>>();
     for (const row of [...table.where({ sender: [of] }), ...table.where({ recipient: [of] })]) {
       const peer = row.senderID === of ? row.recipientID : row.senderID;

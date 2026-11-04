@@ -227,7 +227,7 @@ const CANCELLED = {
   cancelled: "Cancelled with the Work's cancellation.",
   reassigned: "Cancelled with the Work's reassignment.",
 } as const;
-/** Cancels the open asks on a Work whose asker no longer moves it (Q12). */
+/** Cancels the open asks on a Work whose asker no longer moves it. */
 export function cancelOpen(
   forms: Asks,
   ticketID: string,

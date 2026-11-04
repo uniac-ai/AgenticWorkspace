@@ -1,6 +1,6 @@
 # Design and boundaries
 
-The graphs below are the accepted component and exposure graphs. Exact contracts and local policies were settled before implementation; [contracts.md](contracts.md) holds them.
+The graphs below are the component and exposure graphs; [contracts.md](contracts.md) holds the exact contracts and local policies.
 
 ## Component dependencies
 

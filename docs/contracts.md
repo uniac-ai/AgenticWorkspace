@@ -115,8 +115,8 @@ An `approval` ask authorizes something that can't be undone, so only the asker's
 **Hosts' reads.** `WorkClient.asks({requesterID?, routedTo?, answeredBy?, status?, after?, limit?})` is not a tool. It lists asks wherever they are: an asker's own, those routed to an Actor, and those an Actor answered. Older asks with no Work are included.
 
 **History.** These action names are part of the contract, since hosts label what changed by them.
-- **An ask's history:** `created` (asked), `responded` (answered), `raised`, `resolved` (closed as resolved) and `cancelled` (closed as cancelled by its asker or stand-in, or by Q12).
-- **Q12's cancellations:** only these carry `resolution.reason`.
+- **An ask's history:** `created` (asked), `responded` (answered), `raised`, `resolved` (closed as resolved) and `cancelled` (closed as cancelled by its asker or stand-in, or when its Work moves on).
+- **Cancellations when Work moves on:** only these carry `resolution.reason`.
 - **A Work's history:** `created`, `updated` (every edit, a cancel included), `submitted` and `reviewed` (the answer to a submission).
 
 ## Errors and protocol
