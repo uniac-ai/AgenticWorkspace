@@ -111,7 +111,8 @@ export function createMessages(
       const pair = (query.between ?? [caller, query.counterpartyID as string]).toSorted();
       const scope = ["messages", "between", pair];
       const head = table.head();
-      // The pair's parties also match either one's stored self messages; only a self pair keeps them.
+      // The pair's parties also match either one's self messages stored before they were refused;
+      // only a self pair keeps them.
       const rows = table
         .where({ sender: pair, recipient: pair })
         .filter(

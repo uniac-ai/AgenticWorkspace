@@ -1,6 +1,6 @@
 # Design and boundaries
 
-The lasting accepted references are [Workspace first version tool list](https://chatgpt.com/space/page_120b6e009e708191ad4dabcb0a739053) and [Agent coordination build or reuse assessment](https://chatgpt.com/space/page_836285fe88908191a181d7e96783f3aa). The graphs below preserve the accepted component and exposure graphs. Exact contracts and local policies were subsequently settled by delivery management before implementation; package placement inside Hub was selected by the human.
+The graphs below are the accepted component and exposure graphs. Exact contracts and local policies were settled before implementation; [contracts.md](contracts.md) holds them.
 
 ## Component dependencies
 

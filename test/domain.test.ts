@@ -280,7 +280,7 @@ test("direct messages need no work and arbitrary prose creates no record", (t) =
   );
 });
 
-test("an ask sits on Work its asker owns, and an ask stored before reads where it was left", (t) => {
+test("an ask sits on Work its asker owns, and an older ask reads where it was left", (t) => {
   const f = fixture(t);
   const requester = f.as("requester");
   const owner = f.as("owner");

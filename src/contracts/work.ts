@@ -14,7 +14,10 @@ import {
 } from "./common.js";
 import { AskClose, AskInput, Form } from "./forms.js";
 
-/** A `blocked` stored before it was refused reads as `active`; `cancelled` is its requester's terminal state. */
+/**
+ * A `blocked` stored before it was refused reads as `active`; `cancelled` is its requester's
+ * terminal state.
+ */
 export const WorkStatus = z.enum([
   "open",
   "active",

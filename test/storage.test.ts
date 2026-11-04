@@ -154,7 +154,7 @@ test("a version 0 database upgrades once in place and keeps every original event
       assert.equal(accepted.title, `Ship ${Array(14).fill("release").join(" ")}…`);
       assert.equal(accepted.goal, longGoal);
       assert.equal(owner.work.get({ ticketID: "unbroken" }).title, `${"x".repeat(119)}…`);
-      // A Form before version 3 named no Work, so it reads alone.
+      // This Form names no Work, so it reads alone.
       const form = owner.work.get({ askID: "form" });
       assert.ok("formID" in form);
       assert.equal(Object.hasOwn(form, "respondentIDs"), false);

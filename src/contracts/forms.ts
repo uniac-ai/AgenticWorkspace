@@ -29,7 +29,7 @@ export const FormState = z.strictObject({
   title: Title,
   context: Text.optional(),
   links: Links,
-  /** Absent only on an ask stored before asks lived on Work that named none. */
+  /** Absent only on an older ask that names no Work. */
   workID: ID.optional(),
   approval: z.boolean(),
   collect: z.boolean(),

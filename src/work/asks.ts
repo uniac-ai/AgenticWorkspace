@@ -18,8 +18,10 @@ import { now, published, readThrough, recorded, stateOf } from "../records.js";
 
 type Asks = RecordTable<FormState, "requester" | "status" | "work" | "route">;
 
-/** Asks as this package reads them: a `cause` stored before asks lived on Work is left unread, and
- * an ask stored then has no raises. */
+/**
+ * Asks as this package reads them: a `cause` stored before asks lived on Work is left unread, and
+ * an ask stored then has no raises.
+ */
 export function asksAsRead(forms: Asks): Asks {
   return readThrough(forms, (row) => {
     const { cause: _cause, ...ask } = row as Snapshot<FormState> & { cause?: string };

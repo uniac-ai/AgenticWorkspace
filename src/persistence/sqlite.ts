@@ -6,14 +6,15 @@ import type { Filter, RecordTable, Snapshot, WorkspaceStore } from "./index.js";
 /** A version 3 database also holds the status and status_history tables, which stay unread. */
 const MODULES = ["messages", "work", "forms"] as const;
 /**
- * Step N upgrades a database at user_version N; 0 is one from before storage versions, or a new one, where the data
- * steps find no rows. Snapshots change in place and history keeps every original event.
+ * Step N upgrades a database at user_version N to N + 1, and each step's comment names the version
+ * it produces. 0 is a database from before storage versions, or a new one, where the data steps
+ * find no rows. Snapshots change in place and history keeps every original event.
  */
 const UPGRADES: ((db: DatabaseSync) => void)[] = [
   // Version 1: Messages link no Work.
   (db) => db.exec("UPDATE messages SET data=json_remove(data,'$.workID')"),
-  // Version 2: Work has a title from its goal and links, and accepted Work was completed when its review
-  // accepted it.
+  // Version 2: Work has a title from its goal and links, and accepted Work was completed when its
+  // review accepted it.
   (db) => {
     const update = db.prepare("UPDATE work SET data=? WHERE id=?");
     for (const { id, data } of db.prepare("SELECT id,data FROM work").all()) {
@@ -25,9 +26,9 @@ const UPGRADES: ((db: DatabaseSync) => void)[] = [
       );
     }
   },
-  // Version 3: asks have a title from their first field's label, name no respondents and stay open until
-  // their asker closes them, as Forms did before; options carry detail, and each response the time of
-  // its last answer.
+  // Version 3: asks have a title from their first field's label, name no respondents and stay open
+  // until their asker closes them, as Forms did before; options carry detail, and each response the
+  // time of its last answer.
   (db) => {
     const events = db.prepare("SELECT event FROM forms_history WHERE id=? ORDER BY revision");
     const update = db.prepare("UPDATE forms SET data=? WHERE id=?");
@@ -52,8 +53,9 @@ const UPGRADES: ((db: DatabaseSync) => void)[] = [
       update.run(JSON.stringify(ask), String(id));
     }
   },
-  // Version 4: indexed columns for the fields lists select by. A stored `blocked` is indexed as `active`,
-  // the status Work reads it as, and an ask's route starts at its last raiser, else its asker.
+  // Version 4: indexed columns for the fields lists select by. A stored `blocked` is indexed as
+  // `active`, the status Work reads it as, and an ask's route starts at its last raiser, else its
+  // asker.
   // A party's index leads with the party and then status, so a party's Work or asks in some
   // statuses is one index range whatever the planner knows of the data.
   (db) =>
