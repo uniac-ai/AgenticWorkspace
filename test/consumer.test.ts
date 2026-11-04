@@ -53,14 +53,18 @@ const peer: Actor = {...actor,actorID:'peer',name:'Peer'};
 const observer: Actor = {...actor,actorID:'observer',name:'Observer'};
 const authority: ActorAuthority = {
   get: (_caller,id) => [actor,peer,observer].find(row=>row.actorID===id),
+  manager: (_caller,id) => id==='peer' || id==='observer' ? 'self' : null,
   within: (caller,id,ancestor) => {
     assert.equal(caller,'observer');
     return [actor,peer,observer].some(row=>row.actorID===id) && (ancestor===id || ancestor==='self');
   },
 };
 // @ts-expect-error Every host must supply canonical synchronous membership.
-const incompleteAuthority: ActorAuthority = {get:authority.get};
+const incompleteAuthority: ActorAuthority = {get:authority.get,manager:authority.manager};
 assert.ok(incompleteAuthority);
+// @ts-expect-error Every host must supply each Actor's retained manager.
+const managerless: ActorAuthority = {get:authority.get,within:authority.within};
+assert.ok(managerless);
 // @ts-expect-error Canonical membership must return a synchronous boolean.
 const asynchronousAuthority: ActorAuthority = {...authority,within:async()=>true};
 assert.ok(asynchronousAuthority);

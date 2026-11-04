@@ -10,7 +10,7 @@ Arrows point toward a dependency; dashed edges are optional. Forms and Work trac
 flowchart BT
     A["Actors<br/>Identity and canonical membership"]
     M["Messages<br/>Persistent pair conversations"]
-    T["Work tracking<br/>Work, owner, progress, result and review"]
+    T["Work tracking<br/>Work, owner, progress, result and its answer"]
     F["Forms: asks<br/>Fields, responses and resolution"]
     F -.->|"optional work reference"| T
     M -->|"sender and recipient"| A
@@ -33,7 +33,7 @@ Both MCP exposures use the same Actor identity and role rules. The execution ser
 
 | Module        | Consumes                                         | Exposes                                            | Owns                                                                                                            |
 | ------------- | ------------------------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Actors        | Injected canonical authority and admitted caller | `ActorsClient.get/within`                          | No persisted state; no lifecycle administration                                                                 |
+| Actors        | Injected canonical authority and admitted caller | `ActorsClient.get/within/manager`                  | No persisted state; no lifecycle administration                                                                 |
 | Messages      | Actors; Messages persistence                     | `MessagesClient.send/get/list`                     | Content, parties, conversation and order                                                                        |
 | Work tracking | Actors; Work persistence                         | `WorkClient` and its read-only `WorkReader` subset | Work: requester, owner, title, goal, progress, status, links, waits-on, submission, review, completion, history |
 | Forms         | Actors; optional WorkReader; Forms persistence   | `FormsClient`                                      | Asks: title, context, links, fields and options, approval, collection, responses with notes, closure            |

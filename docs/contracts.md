@@ -16,9 +16,9 @@ Each contract carries `level`, the smallest organization level that presents it.
 | work_create  | Report | `{title,goal?,ownerID?,links?,waitsOn?}`                                                                                                 | Create Work; caller requests it and owns it by default |
 | work_get     | Report | `{ticketID,history?}`                                                                                                                    | Read a ticket, including accepted work                 |
 | work_list    | Report | `{ownerID?,requesterID?:id\|id[],waitsOnActorID?,ownerWithin?,requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}` | Read matching shared tickets                           |
-| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|blocked,links?,waitsOn?}`                             | Update at least one allowed field                      |
+| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|cancelled,links?,waitsOn?}`                           | Update at least one allowed field, or cancel           |
 | work_submit  | Report | `{ticketID,expectedRevision?,result,evidence?}`                                                                                          | Submit; self-requested Work completes                  |
-| work_review  | Team   | `{ticketID,expectedRevision?,submissionID,verdict:accepted\|changes_requested,comment?}`                                                 | Review the exact current submission                    |
+| work_answer  | Team   | `{askID,ticketID?,answers:{verdict:accepted\|changes_requested},note?}`                                                                  | Answer the current submission, by its ID               |
 | form_create  | Report | `{title,context?,links?,workID?,cause?,approval?,collect?,fields:[{name,label,required,options?:[{value,detail?}],recommended?}]}`       | Ask                                                    |
 | form_get     | Report | `{formID,history?}`                                                                                                                      | Read an ask                                            |
 | form_list    | Report | `{workID?,requesterID?:id\|id[],requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}`                               | Read matching shared asks                              |
@@ -30,7 +30,7 @@ A Form is an ask; the tools keep the `form_*` names.
 ## Authority
 
 - Every active admitted Actor may read every message and every conversation. An Actor sends to any other active Actor, never to itself. A reply is another message in the same conversation. Messages have no read, delivery or handling state, and reading changes nothing.
-- Every active admitted Actor may get/list all organization Work, including history and accepted tickets. The requester edits goal and owner and reviews. The current owner edits title, progress, status, links and waitsOn, and submits. Reassignment changes write roles and filter membership; it does not remove shared read access. New owner must be active.
+- Every active admitted Actor may get/list all organization Work, including history and accepted tickets. The requester edits goal and owner, cancels and answers the submission; once it is closed, its nearest open manager does. The current owner edits title, progress, status, links and waitsOn, and submits. Reassignment changes write roles and filter membership; it does not remove shared read access. New owner must be active.
 - Every active admitted Actor may get/list all organization asks and history, and may ask. Any active Actor may answer an open ask, except an approval, which only the asker's managers answer. Only the asker closes its ask. Answering and closing never change Work, and Form reads never consult Work. Active callers retain shared history reads when counterparties close.
 
 The host composes canonical Actor authority and a WorkspaceStore for one Hub organization. Public read does not construct an elevated identity or alter Actor visibility. List criteria do not select the caller or grant write authority.
@@ -76,16 +76,20 @@ A conversation reads one of two ways, with items ascending.
 Work is the unit of progress. A Work record holds:
 - `title` (at most 120 characters) and an optional `goal`;
 - `progress`: a paragraph, then optionally a Markdown task list of steps, where `- [x]` marks a step done and `- [ ]` one not done. Readers take the first step not done as the current one and render a plain list as numbered steps. The Workspace stores the text as written and parses none of it;
-- `status`;
+- `status`: `open`, `active`, `submitted`, `changes_requested`, `accepted` or `cancelled`;
 - `links`, each `{label?, url}` with an http or https URL;
 - an optional `waitsOn`: an Actor (`{actorID}`), other Work (`{ticketID}`) or a short description (`{text}`);
 - `submission` and `review`, and `completedAt` once accepted.
 
 `work_create` makes the caller the requester and, unless `ownerID` names another active Actor, the owner. A waited-on Actor or Work must exist. `work_update` sets `waitsOn: null` to clear it and `links: []` to empty them.
 
-New Work is `open`. In `open`, `active`, `blocked` or `changes_requested`, the owner may edit its fields and set `open`, `active` or `blocked`, and the requester may edit goal and owner. `work_submit` records a new submission. On Work its owner requested itself it completes at once: `accepted`, with `completedAt` and no review. Other Work enters `submitted` and is frozen until the requester reviews the exact current submission. Accepting needs no comment, sets `completedAt` and is terminal; requesting changes needs a comment and returns the Work to its owner. Follow-up work gets a new ticket.
+New Work is `open`. In `open`, `active` or `changes_requested`, the owner may edit its fields and set `open` or `active`, and the requester may edit goal and owner, or set `cancelled`. Cancelled Work is terminal and frozen. Work that can't move without someone asks; Work held up outside the organization, or by other Work, stays `active` and says what it waits on. So `blocked` is refused, with a message that says so. A Work row that 0.5 stored as `blocked` reads as `active` in every read, filter and rule; its next write stores `active`, and its history keeps the `blocked` write.
 
-`expectedRevision` is optional on the owner's writes (edits and submit), which no one else makes, and on a review, which the `submissionID` pins. Goal and owner edits require it. The state, role and revision checks and the snapshot/history writes share one SQLite transaction; a stale revision or a noncurrent submission conflicts. Resubmission retains prior evidence and reviews in history.
+`work_submit` records a new submission. On Work its owner requested itself it completes at once: `accepted`, with `completedAt` and no review. Other Work enters `submitted` and is frozen until its requester answers the current submission with `work_answer`. The answer names the submission by its ID (`askID`, with an optional `ticketID` that must be the Work it is on) and gives `answers: {verdict}`; its `note` is the comment. It is stored as `review`. Accepting needs no note, sets `completedAt` and is terminal; requesting changes needs a note and returns the Work to its owner. Follow-up work gets a new ticket.
+
+Once the requester is closed, its rights pass to its nearest open manager: the first open Actor up its retained managers. That Actor edits goal and owner, cancels, and answers the submission.
+
+`expectedRevision` is optional on the owner's writes (edits and submit), which no one else makes. Goal, owner and cancel edits require it. An answer takes none: its submission ID pins it. The state, role and revision checks and the snapshot/history writes share one SQLite transaction; a stale revision conflicts. By its ID alone a submission is found only while it is current; named with its `ticketID`, an earlier submission of that Work conflicts, and an ID that was never one of its submissions is `not_found`. Resubmission retains prior evidence and reviews in history.
 
 ## Asks
 
@@ -103,4 +107,4 @@ The asker closes its open ask with `form_close`, with `expectedRevision`, as `re
 
 ## Errors and protocol
 
-Domain clients throw `WorkspaceError` with `invalid_input`, `not_found`, `forbidden` or `conflict`. Reads of inaccessible IDs use `not_found`. MCP successes include record/page `structuredContent` plus equivalent JSON text and an advertised output schema. MCP tool errors set `isError:true` and carry JSON text `{code,message}`; they omit structured content to avoid success-schema validation. Unexpected failures become generic `internal_error` without raw exception text. Discovery uses SDK protocol errors: domain refusals return invalid-request errors with public text; unexpected failures return internal errors with the same generic public message. Viewer calls to a mutation are refused even when sent directly without discovery.
+Domain clients throw `WorkspaceError` with `invalid_input`, `not_found`, `forbidden` or `conflict`. An `invalid_input` from a contract names each schema issue as `path: message`. Reads of inaccessible IDs use `not_found`. MCP successes include record/page `structuredContent` plus equivalent JSON text and an advertised output schema. MCP tool errors set `isError:true` and carry JSON text `{code,message}`; they omit structured content to avoid success-schema validation. Unexpected failures become generic `internal_error` without raw exception text. Discovery uses SDK protocol errors: domain refusals return invalid-request errors with public text; unexpected failures return internal errors with the same generic public message. Viewer calls to a mutation are refused even when sent directly without discovery.

@@ -49,6 +49,7 @@ export function fixtureAuthority() {
   ]);
   const authority: ActorAuthority = {
     get: (_caller, id) => rows.get(id),
+    manager: (_caller, actorID) => managers.get(actorID) ?? null,
     within: (_caller, actorID, ancestorID) => {
       if (!rows.has(ancestorID)) return false;
       for (

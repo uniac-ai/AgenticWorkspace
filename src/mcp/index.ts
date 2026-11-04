@@ -40,7 +40,7 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
     work_list: bind(WorkContracts.work_list, (input) => work.list(input)),
     work_update: bind(WorkContracts.work_update, (input) => work.update(input)),
     work_submit: bind(WorkContracts.work_submit, (input) => work.submit(input)),
-    work_review: bind(WorkContracts.work_review, (input) => work.review(input)),
+    work_answer: bind(WorkContracts.work_answer, (input) => work.answer(input)),
     form_create: bind(FormContracts.form_create, (input) => forms.create(input)),
     form_get: bind(FormContracts.form_get, (input) => forms.get(input)),
     form_list: bind(FormContracts.form_list, (input) => forms.list(input)),
