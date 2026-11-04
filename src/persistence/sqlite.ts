@@ -53,6 +53,8 @@ const UPGRADES: ((db: DatabaseSync) => void)[] = [
   },
   // 0.6: indexed columns for the fields lists select by. A stored `blocked` is indexed as `active`,
   // the status 0.6 reads it as, and an ask's route starts at its last raiser, else its asker.
+  // A party's index leads with the party and then status, so a party's Work or asks in some
+  // statuses is one index range whatever the planner knows of the data.
   (db) =>
     db.exec(`
       ALTER TABLE messages ADD COLUMN sender TEXT GENERATED ALWAYS AS (json_extract(data,'$.senderID')) VIRTUAL;
@@ -67,13 +69,12 @@ const UPGRADES: ((db: DatabaseSync) => void)[] = [
       ALTER TABLE forms ADD COLUMN route TEXT GENERATED ALWAYS AS (COALESCE(json_extract(data,'$.raises[#-1].actorID'),json_extract(data,'$.requesterID'))) VIRTUAL;
       CREATE INDEX messages_sender ON messages(sender);
       CREATE INDEX messages_recipient ON messages(recipient);
-      CREATE INDEX work_owner ON work(owner);
-      CREATE INDEX work_requester ON work(requester);
+      CREATE INDEX work_owner ON work(owner,status);
+      CREATE INDEX work_requester ON work(requester,status);
       CREATE INDEX work_status ON work(status);
       CREATE INDEX work_submission ON work(submission);
-      CREATE INDEX forms_requester ON forms(requester);
-      CREATE INDEX forms_status ON forms(status);
-      CREATE INDEX forms_work ON forms(work);
+      CREATE INDEX forms_requester ON forms(requester,status);
+      CREATE INDEX forms_work ON forms(work,status);
       CREATE INDEX forms_route ON forms(status,route);
     `),
 ];
@@ -104,8 +105,6 @@ export function openSqlite(path: string): WorkspaceStore {
       for (const upgrade of UPGRADES.slice(version)) upgrade(db);
       db.exec(`PRAGMA user_version=${UPGRADES.length}`);
     });
-    // Index statistics let a filter on several columns use its most selective index.
-    db.exec("PRAGMA analysis_limit=1000; PRAGMA optimize=0x10002;");
   } catch (error) {
     db.close();
     throw error;

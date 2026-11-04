@@ -79,6 +79,9 @@ export function createWork(
         filter: {
           owner: query.ownerID === undefined ? undefined : [query.ownerID],
           requester: query.requesterID === undefined ? undefined : [query.requesterID].flat(),
+          // The status column holds a stored blocked as active: it selects a superset, and the
+          // status check below keeps the exact match.
+          status: query.status?.map((status) => (status === "blocked" ? "active" : status)),
         },
         within: { owner: query.ownerWithin, requester: query.requesterWithin },
       };

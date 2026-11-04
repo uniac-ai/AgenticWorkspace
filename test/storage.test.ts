@@ -164,12 +164,7 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
       store.close();
     }
     assert.equal(version(file), 4);
-    assert.deepEqual(indexes(file, "forms"), [
-      "forms_requester",
-      "forms_route",
-      "forms_status",
-      "forms_work",
-    ]);
+    assert.deepEqual(indexes(file, "forms"), ["forms_requester", "forms_route", "forms_work"]);
   }
   const store = openSqlite(file);
   try {
@@ -281,12 +276,7 @@ test("a 0.5 database upgrades to version 4 by indexing fields, rewriting no reco
     "work_status",
     "work_submission",
   ]);
-  assert.deepEqual(indexes(file, "forms"), [
-    "forms_requester",
-    "forms_route",
-    "forms_status",
-    "forms_work",
-  ]);
+  assert.deepEqual(indexes(file, "forms"), ["forms_requester", "forms_route", "forms_work"]);
   assert.deepEqual(indexes(file, "status"), []);
   const store = openSqlite(file);
   try {
@@ -368,7 +358,6 @@ test("indexed lookups select current snapshots by column values, through their i
       event,
     );
   store.transaction(() => {
-    // Many owners and few statuses, so an owner and status filter has a more selective index.
     for (let i = 0; i < 300; i++) work(`w${i}`, `o${i % 100}`, i % 3 === 0 ? "accepted" : "open");
     ask("plain", "owner", { workID: "w1" });
     // A raise is how 0.6 stores an ask passed up; its route starts at the raiser.
@@ -426,7 +415,8 @@ test("indexed lookups select current snapshots by column values, through their i
       .all('["o1"]', '["open"]')
       .map((row) => String(row.detail))
       .join("; ");
-    assert.match(plan, /SEARCH m USING INDEX work_owner/);
+    // One range of the owner's index, with no index statistics needed to choose it.
+    assert.match(plan, /SEARCH m USING INDEX work_owner \(owner=\? AND status=\?\)/);
   } finally {
     db.close();
   }
