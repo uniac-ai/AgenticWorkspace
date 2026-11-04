@@ -1,4 +1,4 @@
-/** Immutable direct messages, each in its pair's conversation and the one Message order. */
+/** Immutable direct messages, each in its pair's conversation and the one Message order; reads are open. */
 import { createHash, randomUUID } from "node:crypto";
 import { type ActorsClient, activeActor } from "../actors/index.js";
 import {
@@ -16,9 +16,9 @@ import { names, now, position, token } from "../records.js";
 export interface MessagesClient {
   send(input: Input<typeof MessageContracts.message_send.input>): Message;
   get(input: Input<typeof MessageContracts.message_get.input>): Message;
-  list(
-    input?: Input<typeof MessageContracts.message_list.input>,
-  ): List<Message> & { older: string | null };
+  list(input: Input<typeof MessageContracts.message_list.input>): List<Message> & {
+    older: string | null;
+  };
 }
 /** One direct conversation per pair; the ID is opaque to clients. */
 const conversationOf = (a: string, b: string) =>
@@ -40,12 +40,46 @@ export function createMessages(
   store: Pick<WorkspaceStore, "messages" | "transaction">,
 ): MessagesClient {
   const table = store.messages;
-  const visible = (row: MessageState, caller: string) =>
-    row.senderID === caller || row.recipientID === caller;
+  const page = (
+    items: Snapshot<MessageState>[],
+    next: string | null,
+    older: string | null,
+  ): List<Message> & { older: string | null } => ({
+    items: items.map(message),
+    next,
+    older,
+    actors: names(
+      actors,
+      items.flatMap((row) => [row.senderID, row.recipientID]),
+    ),
+  });
+  /** An Actor's conversations, newest first, each as its latest message. */
+  function conversations(of: string, after: string | undefined, limit: number) {
+    const scope = ["messages", "of", of];
+    const head = table.head();
+    // Keyed by counterparty; a 0.5 self message is the Actor's conversation with itself.
+    const latest = new Map<string, Snapshot<MessageState>>();
+    for (const row of [...table.where({ sender: [of] }), ...table.where({ recipient: [of] })]) {
+      const peer = row.senderID === of ? row.recipientID : row.senderID;
+      if (row.cursor <= head && row.cursor > (latest.get(peer)?.cursor ?? 0)) latest.set(peer, row);
+    }
+    const bound = after === undefined ? head + 1 : position(after, scope);
+    const rows = [...latest.values()]
+      .filter((row) => row.cursor < bound)
+      .sort((left, right) => right.cursor - left.cursor);
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
+    return page(items, last && rows.length > items.length ? token(scope, last.cursor) : null, null);
+  }
   return {
     send(input) {
       const request = parse(MessageContracts.message_send.input, input);
       const caller = actors.get().actorID;
+      requireThat(
+        request.recipientID !== caller,
+        "invalid_input",
+        "an Actor doesn't message itself",
+      );
       activeActor(actors, request.recipientID);
       return store.transaction(() => {
         const at = now();
@@ -61,25 +95,27 @@ export function createMessages(
     },
     get(input) {
       const request = parse(MessageContracts.message_get.input, input);
-      const caller = actors.get().actorID;
+      actors.get();
       const row = table.get(request.messageID);
-      requireThat(row && visible(row, caller), "not_found", "record not found");
+      requireThat(row, "not_found", "record not found");
       return message(row);
     },
-    list(input = {}) {
+    list(input) {
       const query = parse(MessageContracts.message_list.input, input);
       const caller = actors.get().actorID;
-      const { before, after, limit, ...filter } = query;
-      const scope = ["messages", filter];
-      const matches = (row: MessageState) =>
-        visible(row, caller) &&
-        (query.counterpartyID === undefined ||
-          (row.senderID === caller && row.recipientID === query.counterpartyID) ||
-          (row.recipientID === caller && row.senderID === query.counterpartyID)) &&
-        (query.direction === "all" ||
-          (query.direction === "incoming" ? row.recipientID === caller : row.senderID === caller));
+      const { before, after, limit } = query;
+      // The contract's refinements leave `of` with only a `next` position, and name one selector.
+      if (query.of !== undefined)
+        return conversations(query.of, after as string | undefined, limit);
+      const pair = (query.between ?? [caller, query.counterpartyID as string]).toSorted();
+      const scope = ["messages", "between", pair];
       const head = table.head();
-      const rows = table.where({}).filter((row) => row.cursor <= head && matches(row));
+      // The pair's parties also match either one's 0.5 self messages; only a self pair keeps them.
+      const rows = table
+        .where({ sender: pair, recipient: pair })
+        .filter(
+          (row) => row.cursor <= head && (pair[0] === pair[1] || row.senderID !== row.recipientID),
+        );
       let items: Snapshot<MessageState>[];
       if (before !== undefined) {
         const bound = before === "latest" ? head + 1 : position(before, scope, "before");
@@ -92,18 +128,13 @@ export function createMessages(
       }
       const first = items[0];
       const last = items.at(-1);
-      return {
-        items: items.map(message),
-        next: last && last.cursor < (rows.at(-1)?.cursor ?? 0) ? token(scope, last.cursor) : null,
-        older:
-          first && first.cursor > (rows[0]?.cursor ?? 0)
-            ? token(scope, first.cursor, "before")
-            : null,
-        actors: names(
-          actors,
-          items.flatMap((row) => [row.senderID, row.recipientID]),
-        ),
-      };
+      return page(
+        items,
+        last && last.cursor < (rows.at(-1)?.cursor ?? 0) ? token(scope, last.cursor) : null,
+        first && first.cursor > (rows[0]?.cursor ?? 0)
+          ? token(scope, first.cursor, "before")
+          : null,
+      );
     },
   };
 }

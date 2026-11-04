@@ -6,10 +6,8 @@ import { test } from "node:test";
 import { fixtureAuthority } from "../examples/authority.js";
 import { createActors } from "../src/actors/index.js";
 import {
-  ActorContracts,
   FormContracts,
   MessageContracts,
-  StatusContracts,
   WorkContracts,
   WorkspaceError,
 } from "../src/contracts/index.js";
@@ -64,14 +62,11 @@ for (const requesterClient of ["human", "software"] as const)
       const outsider = f.as("outsider");
       const ticket = requester.work.create({ title: "Deliver evidence", ownerID: "owner" });
       assert.equal(ticket.status, "open");
-      assert.equal(requester.messages.list().items.length, 0);
+      assert.equal(requester.messages.list({ of: "requester" }).items.length, 0);
       assert.equal(requester.forms.list().items.length, 0);
       const message = requester.messages.send({ recipientID: "owner", text: "Inspect this work" });
       assert.deepEqual(owner.messages.get({ messageID: message.messageID }), message);
-      assert.throws(
-        () => outsider.messages.get({ messageID: message.messageID }),
-        rejects("not_found"),
-      );
+      assert.deepEqual(outsider.messages.get({ messageID: message.messageID }), message);
       assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
       const form = requester.forms.create({
         title: "Which option?",
@@ -291,14 +286,10 @@ test("direct messages need no work and arbitrary prose creates no record", (t) =
   const owner = f.as("owner");
   const prose = "Please do some work";
   assert.ok(prose);
-  assert.equal(requester.messages.list().items.length, 0);
+  assert.equal(requester.messages.list({ of: "requester" }).items.length, 0);
   assert.equal(requester.work.list().items.length, 0);
   const direct = requester.messages.send({ recipientID: "owner", text: prose });
-  assert.equal(
-    owner.messages.list({ direction: "incoming" }).items[0]?.messageID,
-    direct.messageID,
-  );
-  assert.equal(owner.messages.list({ direction: "outgoing" }).items.length, 0);
+  assert.deepEqual(owner.messages.list({ counterpartyID: "requester" }).items, [direct]);
   assert.throws(
     () =>
       requester.messages.send({
@@ -538,25 +529,26 @@ test("multi-page filtered upserts, duplicate updated rows and disappearing match
   assert.throws(() => f.as("owner").forms.list({ after: owned }), rejects("invalid_input"));
   assert.throws(() => f.as("owner").work.list({ limit: 101 }), rejects("invalid_input"));
   f.as("outsider").messages.send({
-    recipientID: "outsider",
-    text: "Hidden before first inbox row",
+    recipientID: "respondent",
+    text: "Another pair's",
   });
-  f.as("owner").messages.send({
-    recipientID: "requester",
-    text: "Outgoing before incoming filter",
-  });
+  f.as("owner").messages.send({ recipientID: "requester", text: "zero" });
   for (const text of ["one", "two", "three"])
     f.as("requester").messages.send({ recipientID: "owner", text });
-  const inbox1 = f.as("owner").messages.list({ direction: "incoming", limit: 1 });
+  const pair = { counterpartyID: "requester" };
+  const firstMessages = f.as("owner").messages.list({ ...pair, limit: 2 });
   f.reopen();
-  const inbox2 = f
+  const restMessages = f
     .as("owner")
-    .messages.list({ direction: "incoming", after: next(inbox1), limit: 3 });
+    .messages.list({ ...pair, after: next(firstMessages), limit: 3 });
   assert.deepEqual(
-    inbox2.items.map((row) => row.text),
+    restMessages.items.map((row) => row.text),
     ["two", "three"],
   );
-  assert.throws(() => f.as("owner").messages.list({ after: 999 }), rejects("invalid_input"));
+  assert.throws(
+    () => f.as("owner").messages.list({ ...pair, after: 999 }),
+    rejects("invalid_input"),
+  );
   f.as("outsider").forms.create({
     workID: hidden.ticketID,
     title: "Different requester",
@@ -801,14 +793,11 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     observer.work.list({ ownerID: "outsider", updatedSince: moved.updatedAt }).items,
     [moved],
   );
-  const privateMessage = requester.messages.send({
+  const openMessage = requester.messages.send({
     recipientID: "respondent",
-    text: "Private despite organization views",
+    text: "Open to organization views",
   });
-  assert.throws(
-    () => observer.messages.get({ messageID: privateMessage.messageID }),
-    rejects("not_found"),
-  );
+  assert.deepEqual(observer.messages.get({ messageID: openMessage.messageID }), openMessage);
   for (const [id, row] of f.rows)
     if (f.authority.within("outsider", id, "owner")) f.rows.set(id, { ...row, state: "closed" });
   f.reopen();
@@ -1044,40 +1033,6 @@ test("only the asker's managers answer an approval, up to the root and never the
   );
 });
 
-test("an Actor's status is its own line, summary and links, replaced in place", (t) => {
-  const f = fixture(t);
-  const agent = f.as("owner");
-  assert.throws(() => agent.status.get(), rejects("not_found"));
-  const first = agent.status.set({ line: "Building 0.5" });
-  assert.deepEqual(
-    { ...first, updatedAt: "" },
-    { actorID: "owner", links: [], line: "Building 0.5", revision: 1, updatedAt: "" },
-  );
-  const link = { label: "PR 5", url: "https://example.test/pull/5" };
-  const second = agent.status.set({ summary: "Reads are in review.", links: [link] });
-  assert.deepEqual(
-    [second.line, second.summary, second.links, second.revision],
-    ["Building 0.5", "Reads are in review.", [link], 2],
-  );
-  assert.deepEqual(f.as("outsider").status.get({ actorID: "owner" }), second);
-  assert.deepEqual(
-    agent.status.get({ history: true }).history?.map((event) => event.detail),
-    [{ line: "Building 0.5" }, { summary: "Reads are in review.", links: [link] }],
-  );
-  for (const input of [
-    {},
-    { line: "x".repeat(161) },
-    { summary: "x".repeat(1201) },
-    { links: [{ url: "javascript:alert(1)" }] },
-    { actorID: "requester", line: "Someone else's" },
-    { state: "blocked" },
-  ])
-    assert.throws(() => agent.status.set(input as never), rejects("invalid_input"));
-  assert.throws(() => agent.status.get({ actorID: "requester" }), rejects("not_found"));
-  f.reopen();
-  assert.deepEqual(f.as("requester").status.get({ actorID: "owner" }), second);
-});
-
 test("an Actor's own Work: defaults to itself, edits without revisions and completes on submit", (t) => {
   const f = fixture(t);
   const agent = f.as("owner");
@@ -1245,9 +1200,9 @@ test("canonical visibility, active callers and retained reads after counterparty
     recipientID: "requester",
     text: `Shared Work context: ${ticket.ticketID}`,
   });
-  assert.throws(
-    () => f.as("respondent").messages.get({ messageID: contextMessage.messageID }),
-    rejects("not_found"),
+  assert.equal(
+    f.as("respondent").messages.get({ messageID: contextMessage.messageID }).text,
+    contextMessage.text,
   );
   const form = f.as("requester").forms.create({
     title: "Open question",
@@ -1262,20 +1217,10 @@ test("canonical visibility, active callers and retained reads after counterparty
   const restricted = bindWorkspace(
     {
       get: (caller, id) => (caller === id ? f.rows.get(id) : undefined),
-      list: (caller) => ({
-        items: [f.rows.get(caller)].filter(
-          (row): row is NonNullable<typeof row> => row !== undefined,
-        ),
-        after: 1,
-      }),
       within: f.authority.within,
     },
     f.store,
     "requester",
-  );
-  assert.deepEqual(
-    restricted.actors.list().items.map((row) => row.actorID),
-    ["requester"],
   );
   assert.throws(() => restricted.actors.get({ actorID: "respondent" }), rejects("not_found"));
   assert.deepEqual(restricted.work.list({ ownerID: "owner", requesterID: "requester" }).items, [
@@ -1343,19 +1288,15 @@ test("lists name their Actors, go newest first and select by update time and sev
 test("every contract carries the level that presents it", () => {
   const levels = Object.fromEntries(
     Object.entries({
-      ...ActorContracts,
       ...MessageContracts,
       ...WorkContracts,
       ...FormContracts,
-      ...StatusContracts,
     }).map(([name, spec]) => [name, spec.level]),
   );
   assert.deepEqual(levels, {
-    actor_get: "team",
-    actor_list: "team",
-    message_send: "team",
+    message_send: "report",
     message_get: "team",
-    message_list: "team",
+    message_list: "report",
     work_create: "report",
     work_get: "report",
     work_list: "report",
@@ -1367,7 +1308,5 @@ test("every contract carries the level that presents it", () => {
     form_list: "report",
     form_respond: "team",
     form_close: "report",
-    status_set: "report",
-    status_get: "report",
   });
 });

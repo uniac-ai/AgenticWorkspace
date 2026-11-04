@@ -25,25 +25,34 @@ export type MessageState = z.infer<typeof MessageState>;
 const messageID = z.strictObject({ messageID: ID });
 export const MessageContracts = {
   message_send: contract(
-    "team",
-    "Send a message to one Actor; it joins the pair's conversation.",
+    "report",
+    "Send a message to another Actor; it joins the pair's conversation.",
     z.strictObject({ recipientID: ID, text: Text }),
     Message,
     true,
   ),
-  message_get: contract("team", "Read a message as one of its parties.", messageID, Message),
+  message_get: contract("team", "Read a message.", messageID, Message),
   message_list: contract(
-    "team",
-    "List the caller's messages ascending: forward after a position, or the newest window before latest/older; counterpartyID selects one conversation.",
+    "report",
+    "Name exactly one of between, counterpartyID or of. between (two Actors) or counterpartyID (the caller and one Actor) reads one conversation ascending: forward after a position or seq, or the newest window before latest/older. of lists an Actor's conversations, newest first, each as its latest message, continuing only after next.",
     z
       .strictObject({
-        direction: z.enum(["incoming", "outgoing", "all"]).default("all"),
+        between: z.array(ID).length(2).optional(),
         counterpartyID: ID.optional(),
+        of: ID.optional(),
         before: z.union([z.literal("latest"), Next]).optional(),
         after: z.union([Next, z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)]).optional(),
         limit: Limit,
       })
-      .refine((query) => query.before === undefined || query.after === undefined),
+      .refine(
+        ({ between, counterpartyID, of }) =>
+          [between, counterpartyID, of].filter((value) => value !== undefined).length === 1,
+      )
+      .refine(({ before, after }) => before === undefined || after === undefined)
+      .refine(
+        ({ of, before, after }) =>
+          of === undefined || (before === undefined && typeof after !== "number"),
+      ),
     listOf(Message).extend({ older: Next.nullable() }),
   ),
 };

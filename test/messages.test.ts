@@ -42,7 +42,6 @@ test("a Message is immutable, in its pair's conversation and the one commit orde
   const asked = f.as("requester").send({ recipientID: "owner", text: "Question" });
   const answered = f.as("owner").send({ recipientID: "requester", text: "Answer" });
   const other = f.as("owner").send({ recipientID: "outsider", text: "Other pair" });
-  const self = f.as("owner").send({ recipientID: "owner", text: "Self" });
   assert.deepEqual(Object.keys(asked), [
     "messageID",
     "conversationID",
@@ -53,53 +52,56 @@ test("a Message is immutable, in its pair's conversation and the one commit orde
     "seq",
   ]);
   assert.equal(asked.conversationID, answered.conversationID);
-  assert.equal(new Set([asked, other, self].map((m) => m.conversationID)).size, 3);
+  assert.notEqual(asked.conversationID, other.conversationID);
   for (const id of ["owner", "requester"]) assert.ok(!asked.conversationID.includes(id));
   assert.deepEqual(
-    [asked, answered, other, self].map((m) => m.seq),
-    [1, 2, 3, 4],
+    [asked, answered, other].map((m) => m.seq),
+    [1, 2, 3],
   );
   assert.deepEqual(f.as("requester").get({ messageID: answered.messageID }), answered);
-  assert.throws(
-    () => f.as("outsider").get({ messageID: asked.messageID }),
-    (error: unknown) => error instanceof WorkspaceError && error.code === "not_found",
-  );
-  for (const [direction, items] of [
-    ["all", [asked, answered, other, self]],
-    ["incoming", [asked, self]],
-    ["outgoing", [answered, other, self]],
-  ] as const)
-    assert.deepEqual(f.as("owner").list({ direction }), {
-      items,
-      next: null,
-      older: null,
-      actors: {
-        owner: { name: "Owner" },
-        requester: { name: "Requester" },
-        ...(direction === "incoming" ? {} : { outsider: { name: "Outsider" } }),
-      },
-    });
+  assert.deepEqual(f.as("outsider").get({ messageID: asked.messageID }), asked);
+  for (const recipientID of ["owner", " owner "])
+    assert.throws(() => f.as("owner").send({ recipientID, text: "Self" }), invalid);
+  assert.deepEqual(f.as("respondent").list({ of: "owner" }), {
+    items: [other, answered],
+    next: null,
+    older: null,
+    actors: {
+      owner: { name: "Owner" },
+      requester: { name: "Requester" },
+      outsider: { name: "Outsider" },
+    },
+  });
   for (const input of [
     { recipientID: "owner", text: "Linked", workID: "ticket" },
     { recipientID: "owner", text: "Threaded", conversationID: asked.conversationID },
   ])
     assert.equal(MessageContracts.message_send.input.safeParse(input).success, false);
+  const pair = { counterpartyID: "requester" };
   for (const input of [
-    { after: -1 },
-    { after: 0.5 },
-    { after: "" },
-    { before: 1 },
-    { before: "LATEST" },
-    { before: "latest", after: 0 },
-    { limit: 0 },
-    { limit: 101 },
-    { direction: "bad" },
-    { senderID: "other" },
+    {},
+    { before: "latest" },
+    { ...pair, direction: "incoming" },
+    { ...pair, of: "owner" },
+    { ...pair, between: ["owner", "requester"] },
+    { between: ["owner"] },
+    { between: ["owner", "requester", "outsider"] },
+    { of: "owner", before: "latest" },
+    { of: "owner", after: 1 },
+    { ...pair, after: -1 },
+    { ...pair, after: 0.5 },
+    { ...pair, after: "" },
+    { ...pair, before: 1 },
+    { ...pair, before: "LATEST" },
+    { ...pair, before: "latest", after: 0 },
+    { ...pair, limit: 0 },
+    { ...pair, limit: 101 },
+    { ...pair, senderID: "other" },
   ])
     assert.throws(() => f.as("owner").list(input as never), invalid);
-  assert.throws(() => f.as("owner").list({ after: f.store.messages.head() + 1 }), invalid);
+  assert.throws(() => f.as("owner").list({ ...pair, after: f.store.messages.head() + 1 }), invalid);
   f.reopen();
-  assert.deepEqual(f.as("owner").get({ messageID: self.messageID }), self);
+  assert.deepEqual(f.as("owner").get({ messageID: other.messageID }), other);
 });
 
 test("a conversation pages from latest to its start and forward from a token or a seq", (t) => {
@@ -133,9 +135,17 @@ test("a conversation pages from latest to its start and forward from a token or 
   for (const misuse of [
     { ...conversation, after: token(initial.older) },
     { counterpartyID: "outsider", before: token(initial.older) },
-    { ...conversation, direction: "incoming" as const, before: token(initial.older) },
+    { of: "owner", after: token(initial.older) },
   ])
     assert.throws(() => f.as("owner").list(misuse), invalid);
+  const between = { between: ["requester", "owner"], before: token(initial.older), limit: 100 };
+  assert.deepEqual(f.as("outsider").list(between).items, peer.slice(51, 151));
+  const ahead = f.as("owner").list({ ...conversation, after: 0, limit: 1 });
+  assert.deepEqual(
+    f.as("outsider").list({ between: ["owner", "requester"], after: token(ahead.next), limit: 1 })
+      .items,
+    peer.slice(1, 2),
+  );
   const gap = f.as("requester").send({ recipientID: "owner", text: "Unseen inbound" });
   const own = f.as("owner").send({ recipientID: "requester", text: "Own reply" });
   const position = initial.items.at(-1)?.seq ?? 0;
@@ -152,63 +162,72 @@ test("a conversation pages from latest to its start and forward from a token or 
   ]);
 });
 
-test("the input read spans conversations, and latest needs no counterparty", (t) => {
+test("an Actor's conversations come newest first, each as its latest message", (t) => {
   const f = fixture(t);
-  f.as("requester").send({ recipientID: "owner", text: "Before attaching" });
-  const seen = f.as("outsider").send({ recipientID: "owner", text: "Last before attaching" });
-  f.as("owner").send({ recipientID: "requester", text: "Outgoing" });
-  const attach = f.as("owner").list({ direction: "incoming", before: "latest", limit: 1 });
-  assert.deepEqual(attach.items, [seen]);
-  const later = [
-    f.as("requester").send({ recipientID: "owner", text: "First after" }),
-    f.as("respondent").send({ recipientID: "owner", text: "Second after" }),
-  ];
-  f.as("owner").send({ recipientID: "respondent", text: "Own send" });
-  const inbox = f.as("owner").list({ direction: "incoming", after: seen.seq });
-  assert.deepEqual(inbox.items, later);
-  assert.deepEqual(Object.keys(inbox.actors).sort(), ["owner", "requester", "respondent"]);
-  assert.notEqual(later[0]?.conversationID, later[1]?.conversationID);
+  f.as("requester").send({ recipientID: "owner", text: "First pair, first" });
+  const second = f.as("outsider").send({ recipientID: "owner", text: "Second pair" });
+  const third = f.as("owner").send({ recipientID: "respondent", text: "Third pair" });
+  f.as("requester").send({ recipientID: "outsider", text: "Not the owner's" });
+  const first = f.as("owner").send({ recipientID: "requester", text: "First pair, latest" });
+  const page = f.as("respondent").list({ of: "owner", limit: 2 });
+  assert.deepEqual(page.items, [first, third]);
+  assert.equal(page.older, null);
+  const rest = f.as("respondent").list({ of: "owner", after: token(page.next), limit: 2 });
+  assert.deepEqual(rest.items, [second]);
+  assert.equal(rest.next, null);
+  assert.deepEqual(Object.keys(rest.actors).sort(), ["outsider", "owner"]);
+  // A conversation that gets a message between page reads moves ahead of the pages already read.
+  const moved = f.as("outsider").send({ recipientID: "owner", text: "Second pair, again" });
   assert.deepEqual(
-    f
-      .as("owner")
-      .list({ before: "latest", limit: 2 })
-      .items.map((m) => m.text),
-    ["Second after", "Own send"],
+    f.as("respondent").list({ of: "owner", after: token(page.next), limit: 2 }).items,
+    [],
   );
+  assert.deepEqual(f.as("owner").list({ of: "owner" }).items, [moved, first, third]);
+  assert.deepEqual(f.as("owner").list({ of: "absent" }).items, []);
+  assert.throws(() => f.as("owner").list({ of: "requester", after: token(page.next) }), invalid);
 });
 
-test("conversation reads keep self, direction and privacy, and closed peers' history", (t) => {
+test("conversations are open to every Actor, keep 0.5 self messages and closed peers' history", (t) => {
   const f = fixture(t);
   const incoming = f.as("requester").send({ recipientID: "owner", text: "Incoming" });
   const outgoing = f.as("owner").send({ recipientID: "requester", text: "Outgoing" });
-  const self = f.as("owner").send({ recipientID: "owner", text: "Self once" });
+  const at = new Date().toISOString();
+  const state = {
+    messageID: "self",
+    senderID: "owner",
+    recipientID: "owner",
+    text: "Self",
+    createdAt: at,
+  };
+  f.store.transaction(() =>
+    f.store.messages.save("self", state, { actorID: "owner", at, action: "sent", detail: {} }),
+  );
+  const self = f.as("owner").get({ messageID: "self" });
   const reader = createMessages(createActors(f.authority, "owner"), f.store);
   const closed = f.rows.get("requester");
   assert.ok(closed);
   f.rows.set("requester", { ...closed, state: "closed" });
-  for (const [direction, items] of [
-    ["all", [incoming, outgoing]],
-    ["incoming", [incoming]],
-    ["outgoing", [outgoing]],
-  ] as const)
-    assert.deepEqual(
-      reader.list({ counterpartyID: " requester ", direction, before: "latest" }).items,
-      items,
-    );
-  for (const direction of ["all", "incoming", "outgoing"] as const)
-    assert.deepEqual(reader.list({ counterpartyID: "owner", direction, before: "latest" }).items, [
-      self,
+  assert.deepEqual(reader.list({ counterpartyID: " requester ", before: "latest" }).items, [
+    incoming,
+    outgoing,
+  ]);
+  for (const between of [
+    ["owner", "requester"],
+    ["requester", "owner"],
+  ])
+    assert.deepEqual(f.as("outsider").list({ between, before: "latest" }).items, [
+      incoming,
+      outgoing,
     ]);
+  assert.deepEqual(reader.list({ counterpartyID: "owner", before: "latest" }).items, [self]);
+  assert.deepEqual(f.as("outsider").list({ between: ["owner", "owner"] }).items, [self]);
+  assert.deepEqual(f.as("outsider").list({ of: "owner" }).items, [self, outgoing]);
   assert.deepEqual(reader.list({ counterpartyID: "unknown", before: "latest" }), {
     items: [],
     next: null,
     older: null,
     actors: {},
   });
-  assert.deepEqual(
-    f.as("outsider").list({ counterpartyID: "requester", before: "latest" }).items,
-    [],
-  );
   assert.throws(
     () => f.as("owner").send({ recipientID: "requester", text: "Closed recipient" }),
     invalid,
@@ -244,7 +263,12 @@ test("a latest window captures the head once across appends", (t) => {
   assert.equal(window.next, null);
   assert.equal(headCalls, 1);
   assert.ok(appended);
+  const observed = appended;
   assert.deepEqual(f.as("owner").list({ counterpartyID: "requester", after: first.seq }).items, [
-    appended,
+    observed,
   ]);
+  const listed = recent.list({ of: "owner" });
+  assert.equal(headCalls, 2);
+  assert.deepEqual(listed.items, [observed]);
+  assert.deepEqual(f.as("owner").list({ of: "owner" }).items, [appended]);
 });

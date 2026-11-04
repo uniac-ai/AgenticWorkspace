@@ -41,27 +41,25 @@ import { createActors, type ActorAuthority } from '@uniac/agentic-workspace/acto
 import { createWork } from '@uniac/agentic-workspace/work';
 import { createMessages } from '@uniac/agentic-workspace/messages';
 import { createForms } from '@uniac/agentic-workspace/forms';
-import { createStatus } from '@uniac/agentic-workspace/status';
-import { Work, Actor, ActorContracts, Message, MessageContracts, WorkspaceError } from '@uniac/agentic-workspace/contracts';
+import { Work, Actor, ActorQuery, Message, MessageContracts, WorkspaceError } from '@uniac/agentic-workspace/contracts';
 import { openSqlite } from '@uniac/agentic-workspace/persistence';
 import { createMcpServer } from '@uniac/agentic-workspace/mcp';
 const actor: Actor = {actorID:'self',name:'Consumer',purpose:'Public exports proof',state:'active'};
 // @ts-expect-error Actor records have no intrinsic client classification.
 const classifiedActor: Actor = {...actor,kind:'human'};
 if (Actor.safeParse(classifiedActor).success) throw new Error('Actor schema accepted kind');
-if (ActorContracts.actor_get.input.safeParse({kind:'human'}).success) throw new Error('Actor lookup accepted kind');
+if (ActorQuery.safeParse({kind:'human'}).success) throw new Error('Actor lookup accepted kind');
 const peer: Actor = {...actor,actorID:'peer',name:'Peer'};
 const observer: Actor = {...actor,actorID:'observer',name:'Observer'};
 const authority: ActorAuthority = {
   get: (_caller,id) => [actor,peer,observer].find(row=>row.actorID===id),
-  list: () => ({items:[actor,peer,observer],after:3}),
   within: (caller,id,ancestor) => {
     assert.equal(caller,'observer');
     return [actor,peer,observer].some(row=>row.actorID===id) && (ancestor===id || ancestor==='self');
   },
 };
 // @ts-expect-error Every host must supply canonical synchronous membership.
-const incompleteAuthority: ActorAuthority = {get:authority.get,list:authority.list};
+const incompleteAuthority: ActorAuthority = {get:authority.get};
 assert.ok(incompleteAuthority);
 // @ts-expect-error Canonical membership must return a synchronous boolean.
 const asynchronousAuthority: ActorAuthority = {...authority,within:async()=>true};
@@ -82,13 +80,13 @@ try {
   const messageKeys = ['messageID','conversationID','senderID','recipientID','text','createdAt','seq'].sort();
   assert.deepEqual(Object.keys(direct).sort(),messageKeys);
   assert.deepEqual(peerMessages.get({messageID:direct.messageID}),direct);
-  assert.deepEqual(peerMessages.list({direction:'incoming'}).items,[direct]);
+  assert.deepEqual(peerMessages.list({counterpartyID:'self'}).items,[direct]);
   const reply = peerMessages.send({recipientID:'self',text:'Hello back'});
   assert.notEqual(reply.messageID,direct.messageID);
   assert.deepEqual(messages.get({messageID:direct.messageID}),direct);
-  assert.deepEqual(messages.list({direction:'incoming'}).items,[reply]);
+  assert.deepEqual(messages.list({of:'self'}).items,[reply]);
   assert.equal(reply.conversationID,direct.conversationID);
-  assert.deepEqual(messages.list({direction:'incoming',after:direct.seq}).items,[reply]);
+  assert.deepEqual(messages.list({between:['peer','self'],after:direct.seq}).items,[reply]);
   const latest = messages.list({counterpartyID:'peer',before:'latest',limit:1});
   assert.deepEqual(Object.keys(latest).sort(),['actors','items','next','older']);
   assert.deepEqual(latest.items,[reply]);
@@ -122,8 +120,6 @@ try {
   assert.equal(closed.status,'resolved');
   const pending = bindWorkspace(authority,store,'peer').forms.create({workID:ticket.ticketID,title:'Optional',fields:[{name:'answer',label:'Optional',required:false}]});
   const approval = bindWorkspace(authority,store,'peer').forms.create({title:'Approve?',approval:true,fields:[{name:'answer',label:'Approve?',required:true}]});
-  const status = createStatus(actors,store).set({line:'Consuming exports',links:[{url:'https://example.test/consumer'}]});
-  assert.deepEqual(createStatus(createActors(authority,'peer'),store).get({actorID:'self'}),status);
   const clients = bindWorkspace(authority,store,'observer');
   assert.equal(clients.actors.within('peer','self'),true);
   assert.equal(clients.actors.within('self','peer'),false);
@@ -138,7 +134,7 @@ try {
     try {
       await server.connect(a); await client.connect(b);
       const tools = (await client.listTools()).tools;
-      assert.equal(tools.length,purpose==='execution'?18:9);
+      assert.equal(tools.length,purpose==='execution'?14:6);
       const formTool = tools.find(tool=>tool.name==='form_get');
       assert.equal(formTool?.outputSchema?.required?.includes('workID'),false);
       const formRead = await client.callTool({name:'form_get',arguments:{formID:form.formID}});
@@ -173,13 +169,12 @@ try {
       const mixed = await client.callTool({name:'message_list',arguments:{counterpartyID:'peer',before:'latest',after:1}});
       assert.equal(mixed.isError,true);
       const read = await client.callTool({name:'message_get',arguments:{messageID:direct.messageID}});
-      assert.equal(read.isError,true);
-      assert.equal(JSON.parse((read.content as {text:string}[])[0]!.text).code,'not_found');
+      assert.deepEqual(read.structuredContent,direct);
       const listed = await client.callTool({name:'message_list',arguments:{direction:'incoming'}});
-      assert.deepEqual((listed.structuredContent as {items:Message[]}).items,[]);
+      assert.equal(JSON.parse((listed.content as {text:string}[])[0]!.text).code,'invalid_input');
     } finally {await client.close(); await server.close();}
   }
-  console.log(JSON.stringify({title:clients.work.get({ticketID:ticket.ticketID}).title,messages:messages.list().items.length,forms:forms.list().items.length}));
+  console.log(JSON.stringify({title:clients.work.get({ticketID:ticket.ticketID}).title,messages:messages.list({counterpartyID:'peer'}).items.length,forms:forms.list().items.length}));
 } finally {store.close();}
 `,
     );
@@ -212,7 +207,7 @@ try {
     );
     assert.equal(installed.private, true);
     assert.equal(installed.version, "0.5.0");
-    assert.equal(Object.keys(installed.exports).length, 9);
+    assert.equal(Object.keys(installed.exports).length, 8);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

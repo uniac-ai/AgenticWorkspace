@@ -3,7 +3,8 @@ import { requireThat } from "../contracts/common.js";
 import type { HistoryEntry } from "../contracts/index.js";
 import type { Filter, RecordTable, Snapshot, WorkspaceStore } from "./index.js";
 
-const MODULES = ["messages", "work", "forms", "status"] as const;
+/** A 0.5 database also holds the status and status_history tables, which 0.6 leaves unread. */
+const MODULES = ["messages", "work", "forms"] as const;
 /**
  * Step N upgrades a database at user_version N; 0 is a 0.4 database or a new one, where the data
  * steps find no rows. Snapshots change in place and history keeps every original event.
@@ -220,7 +221,6 @@ export function openSqlite(path: string): WorkspaceStore {
     messages: table("messages"),
     work: table("work"),
     forms: table("forms"),
-    status: table("status"),
     transaction,
     close: () => db.close(),
   };

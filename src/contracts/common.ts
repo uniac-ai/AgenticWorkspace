@@ -7,11 +7,6 @@ export const Revision = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 export const Level = z.enum(["report", "team", "organization"]);
 export type Level = z.infer<typeof Level>;
 export const Limit = z.number().int().min(1).max(100).default(50);
-/** Directory pages keep the canonical authority's numeric position. */
-export const ListInput = z.strictObject({
-  after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
-  limit: Limit,
-});
 /** An opaque list position; it continues only the read and filter that issued it. */
 export const Next = z.string().trim().min(1).max(1000);
 export const History = z.strictObject({
@@ -37,10 +32,6 @@ export const Links = z.array(Link).max(50);
 /** A heading: a Work's or an ask's title. */
 export const Title = z.string().trim().min(1).max(120);
 export type HistoryEntry = z.infer<typeof History>;
-export interface Page<T> {
-  items: T[];
-  after: number;
-}
 export interface List<T> {
   items: T[];
   next: string | null;
@@ -78,8 +69,6 @@ export function contract<S extends z.ZodType>(
 ) {
   return { level, description, input, output, writes };
 }
-export const pageOf = (record: z.ZodType) =>
-  z.strictObject({ items: z.array(record), after: ListInput.shape.after });
 export const listOf = (record: z.ZodType) =>
   z.strictObject({ items: z.array(record), next: Next.nullable(), actors: Actors });
 /** One ID or several, matching any of them. */

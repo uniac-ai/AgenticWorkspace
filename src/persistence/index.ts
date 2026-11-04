@@ -1,11 +1,5 @@
 /** Transactional snapshots and retained module history; SQLite is the v1 implementation. */
-import type {
-  FormState,
-  HistoryEntry,
-  MessageState,
-  StatusState,
-  WorkState,
-} from "../contracts/index.js";
+import type { FormState, HistoryEntry, MessageState, WorkState } from "../contracts/index.js";
 
 /** updatedAt is the time of the event that wrote the current revision. */
 export type Snapshot<T> = T & { revision: number; cursor: number; updatedAt: string };
@@ -33,7 +27,6 @@ export interface WorkspaceStore {
   work: RecordTable<WorkState, "owner" | "requester" | "status" | "submission">;
   /** route is where an ask's route starts: its last raiser, else its asker. */
   forms: RecordTable<FormState, "requester" | "status" | "work" | "route">;
-  status: RecordTable<StatusState>;
   /** Callback is synchronous; state checks and writes share one transaction. */
   transaction<T>(callback: () => T): T;
   close(): void;
