@@ -400,6 +400,10 @@ test("indexed lookups select current snapshots by column values, through their i
   assert.deepEqual(store.forms.values("requester", {}).sort(), ["outsider", "owner", "respondent"]);
   assert.deepEqual(store.forms.values("route", { requester: [] }), []);
   assert.deepEqual(store.forms.where({ work: ["w1"] })[0]?.updatedAt, at);
+  assert.deepEqual(
+    store.work.values("owner", { status: ["accepted"] }).sort(),
+    [...new Set(Array.from({ length: 100 }, (_, i) => `o${(i * 3) % 100}`))].sort(),
+  );
   const many = Array.from({ length: 40000 }, (_, i) => `o${i}`);
   assert.equal(store.work.where({ owner: many }).length, 300);
   assert.throws(() => store.work.where({ data: ["x"] } as never), /no indexed column data/);
@@ -417,6 +421,16 @@ test("indexed lookups select current snapshots by column values, through their i
       .join("; ");
     // One range of the owner's index, with no index statistics needed to choose it.
     assert.match(plan, /SEARCH m USING INDEX work_owner \(owner=\? AND status=\?\)/);
+    // A party's distinct values under a status filter, as a subtree filter reads them, come from
+    // the party's own index rather than the status index.
+    const values = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT DISTINCT m.owner AS value FROM work m INDEXED BY work_owner WHERE m.owner IS NOT NULL AND m.status IN (SELECT value FROM json_each(?))",
+      )
+      .all('["open"]')
+      .map((row) => String(row.detail))
+      .join("; ");
+    assert.match(values, /SEARCH m USING (COVERING )?INDEX work_owner/);
   } finally {
     db.close();
   }

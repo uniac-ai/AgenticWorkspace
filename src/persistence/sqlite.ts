@@ -133,6 +133,15 @@ export function openSqlite(path: string): WorkspaceStore {
       if (!columns.has(column)) throw new Error(`${name} has no indexed column ${column}`);
       return column;
     };
+    /** The index each column leads, so a column's distinct values come from its own index. */
+    const leading = new Map(
+      db
+        .prepare(
+          "SELECT (SELECT name FROM pragma_index_info(l.name) WHERE seqno=0) AS lead, l.name FROM pragma_index_list(?) l",
+        )
+        .all(name)
+        .map((row) => [String(row.lead), String(row.name)]),
+    );
     const statements = new Map<string, StatementSync>();
     const prepared = (sql: string) => {
       const statement = statements.get(sql) ?? db.prepare(sql);
@@ -183,8 +192,9 @@ export function openSqlite(path: string): WorkspaceStore {
       values(column, filter) {
         const { sql, values } = matching(filter);
         const selected = indexed(column);
+        const index = leading.get(selected);
         return prepared(
-          `SELECT DISTINCT m.${selected} AS value FROM ${name} m WHERE m.${selected} IS NOT NULL${sql}`,
+          `SELECT DISTINCT m.${selected} AS value FROM ${name} m${index === undefined ? "" : ` INDEXED BY ${index}`} WHERE m.${selected} IS NOT NULL${sql}`,
         )
           .all(...values)
           .map((row) => String(row.value));
