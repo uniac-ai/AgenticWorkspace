@@ -68,3 +68,5 @@ An ask is part of the Work its asker owns: `work_update {ticketID, ask}` adds a 
 Each Message belongs to its pair's conversation (`conversationID`) and carries its place in the one Message order (`seq`). `messages.list({counterpartyID, before:"latest", limit:20})` returns the caller's conversation with that Actor, newest window ascending, with `older` for the page before it. `{between: [a, b]}` reads any pair's conversation the same way, and either form with `after` goes forward from a `next` position or the last `seq` a reader handled. `{of: actorID}` lists an Actor's conversations, newest first, each as its latest message. Every Actor reads every conversation. See [Messages](docs/contracts.md#messages).
 
 See [design and accepted graphs](docs/design.md), [contracts and transitions](docs/contracts.md), and [the explicit composition example](examples/consumer.ts). Tests cover requester/owner role swaps, database reopen, history/cursors, authorization, revisions, exact-submission review, SDK calls, stdio process restart, and an external TypeScript consumer importing only package exports.
+
+[MIT license](LICENSE).
