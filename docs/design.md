@@ -4,45 +4,41 @@ The lasting accepted references are [Workspace first version tool list](https://
 
 ## Component dependencies
 
-Arrows point toward a dependency; dashed edges are optional. Forms and Work tracking are separate modules; an ask can stand alone.
+Arrows point toward a dependency. An ask is part of the Work its asker owns, so the Work module owns asks too; Messages link no Work.
 
 ```mermaid
 flowchart BT
     A["Actors<br/>Identity and canonical membership"]
     M["Messages<br/>Persistent pair conversations"]
-    T["Work tracking<br/>Work, owner, progress, result and its answer"]
-    F["Forms: asks<br/>Fields, responses and resolution"]
-    F -.->|"optional work reference"| T
+    T["Work tracking<br/>Work, owner, progress, result and its answer;<br/>its asks: fields, responses, raises and resolution"]
     M -->|"sender and recipient"| A
-    T -->|"owner and participants"| A
-    F -->|"asker, and an approval's managers"| A
+    T -->|"owner, asker, an approval's managers and an ask's route"| A
 ```
 
 ## Exposure and authority
 
 ```mermaid
 flowchart TB
-    E["Execution-use MCP"] -->|"uses"| D["Shared workspace records<br/>Actors · Messages · Work · Forms"]
+    E["Execution-use MCP"] -->|"uses"| D["Shared workspace records<br/>Actors · Messages · Work and its asks"]
     V["Viewer-use MCP"] -->|"reads"| D
     H["AgentOrg Hub<br/>Canonical Actor identity, admission<br/>and Tool exposure"] -.->|"authority binding when integrated"| D
 ```
 
-Both MCP exposures use the same Actor identity and role rules. The execution server exposes all 14 operations. The viewer server exposes six reads and refuses writes, using the same underlying clients and authority checks. The SDK owns protocol initialization, transports, request dispatch, and shutdown. The package constructs an SDK server; the host connects it to an SDK transport and closes it.
+Both MCP exposures use the same Actor identity and role rules. The execution server exposes all 9 operations. The viewer server exposes four reads and refuses writes, using the same underlying clients and authority checks. The SDK owns protocol initialization, transports, request dispatch, and shutdown. The package constructs an SDK server; the host connects it to an SDK transport and closes it.
 
 ## Module contracts
 
-| Module        | Consumes                                         | Exposes                                            | Owns                                                                                                            |
-| ------------- | ------------------------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Actors        | Injected canonical authority and admitted caller | `ActorsClient.get/within/manager`                  | No persisted state; no lifecycle administration                                                                 |
-| Messages      | Actors; Messages persistence                     | `MessagesClient.send/get/list`                     | Content, parties, conversation and order                                                                        |
-| Work tracking | Actors; Work persistence                         | `WorkClient` and its read-only `WorkReader` subset | Work: requester, owner, title, goal, progress, status, links, waits-on, submission, review, completion, history |
-| Forms         | Actors; optional WorkReader; Forms persistence   | `FormsClient`                                      | Asks: title, context, links, fields and options, approval, collection, responses with notes, closure            |
+| Module        | Consumes                                         | Exposes                           | Owns                                                                                                                                                                                                           |
+| ------------- | ------------------------------------------------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Actors        | Injected canonical authority and admitted caller | `ActorsClient.get/within/manager` | No persisted state; no lifecycle administration                                                                                                                                                                |
+| Messages      | Actors; Messages persistence                     | `MessagesClient.send/get/list`    | Content, parties, conversation and order                                                                                                                                                                       |
+| Work tracking | Actors; Work and Forms persistence               | `WorkClient`                      | Work: requester, owner, title, goal, progress, status, links, waits-on, submission, review, completion, history; and its asks: fields and options, approval, collection, responses with notes, raises, closure |
 
-Work does not import Messages or Forms. A Work ticket needs neither. Messages link no Work, and Forms need no work ticket or Work client; a reply is another message in the pair's conversation. A Form's optional Work reference validates existing shared Work on creation and has no lifecycle effect. Messages have no public read/handling state or dependent acknowledgement step. Work and Forms, with their history, and Messages are public within the admitted organization. Form reads require no Work lookup. Work progress may contain stable record references as text; it has no reverse Form mutation or automatic blocker gate.
+Work does not import Messages. Messages link no Work; a reply is another message in the pair's conversation. An ask is stored in its own row of the forms table, beside its Work, so asking, answering, raising and closing never move the Work's revision. Submitting, cancelling or reassigning Work cancels its open asks in the same transaction. An ask's route is derived when read, from its asker, its raises and the host's `manager` relation, and nothing stores a destination. Messages have no public read/handling state or dependent acknowledgement step. Work and its asks, with their history, and Messages are public within the admitted organization. Work progress may contain stable record references as text.
 
-The host binds one organization's canonical authority and persistence into the composition. Shared reads authenticate the existing caller; they do not construct a privileged Actor. Work and Form filters intersect before pagination, using the same traversal and record schemas. Business write roles remain separate from shared visibility.
+The host binds one organization's canonical authority and persistence into the composition. Shared reads authenticate the existing caller; they do not construct a privileged Actor. Work and ask filters intersect before pagination, using the same traversal and record schemas. Business write roles remain separate from shared visibility.
 
-The required synchronous canonical `within(callerID, actorID, ancestorID)` relationship read supplies inclusive retained ancestry, including closed positions and descendants beyond any Team depth limit. The bound Actor client revalidates its active caller; Work/Form predicates apply the subtree criteria before traversal limits, and an approval's answer requires the responder to be a strict ancestor of the asker. Workspace stores no hierarchy or new Actor field and adds no MCP Tool. The model-free fixture alone holds a manager map for its example truth. Requester scope is immutable record origin, not causal ticket lineage. Independent lane cursors and bounded from-zero refresh/reconciliation preserve the current-upsert limitations described in the contract.
+The required synchronous canonical `within(callerID, actorID, ancestorID)` relationship read supplies inclusive retained ancestry, including closed positions and descendants beyond any Team depth limit. The bound Actor client revalidates its active caller; Work predicates apply the subtree criteria before traversal limits, and an approval's answer requires the responder to be a strict ancestor of the asker. Workspace stores no hierarchy or new Actor field. The model-free fixture alone holds a manager map for its example truth. Requester scope is immutable record origin, not causal ticket lineage. Independent lane cursors and bounded from-zero refresh/reconciliation preserve the current-upsert limitations described in the contract.
 
 The root composition factory wires distinct clients; it is not another multi-domain operation client. Consumers can construct and use any module independently through its own export. Contracts depend only on Zod. Domain modules import persistence types; native SQLite is loaded only through the persistence implementation export.
 
@@ -50,7 +46,7 @@ A Message's `conversationID` is derived from its pair when read and its `seq` is
 
 ## Persistence and state changes
 
-SQLite has separate current-snapshot and history tables for Messages, Work and Forms; a 0.5 database also holds the `status` and `status_history` tables, which 0.6 leaves in place, unread. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. A record's `updatedAt` is the time of the history entry for its current revision. Old submissions, reviews and responses remain in history after newer ones replace their current fields; reads return history only when asked. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
+SQLite has separate current-snapshot and history tables for Messages, Work and asks (the `forms` table); a 0.5 database also holds the `status` and `status_history` tables, which 0.6 leaves in place, unread. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. A record's `updatedAt` is the time of the history entry for its current revision. Old submissions, reviews and responses remain in history after newer ones replace their current fields; reads return history only when asked. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
 
 The database records its schema in `PRAGMA user_version`. Opening a database runs, in one transaction, every upgrade step after its version: 0 is a database written by 0.4 or earlier, or a new one, where the data steps find no rows. Steps change current snapshots in place and never rewrite history, so an original value a step removes stays in the event that recorded it. A database newer than the package is refused and left unchanged. A title a step derives is the first line of the source text, cut at a word boundary to 120 characters with "…"; the source text is unchanged.
 
@@ -68,4 +64,4 @@ The persistence adapter selects current snapshots through those indexed columns 
 
 ## Repository map
 
-`src/contracts` owns runtime schemas and exported types. Each of `src/actors`, `src/messages`, `src/work` and `src/forms` exposes its client. `src/persistence` owns the storage boundary and SQLite implementation. `src/mcp` adapts those clients to SDK servers. `src/index.ts` composes clients. Model-free authorities and stdio use live only in `examples`; they are not exported as production identity services. Tests include a packed-package consumer installed outside this repository.
+`src/contracts` owns runtime schemas and exported types. Each of `src/actors`, `src/messages` and `src/work` exposes its client; `src/work/asks.ts` holds an ask's rules. `src/persistence` owns the storage boundary and SQLite implementation. `src/mcp` adapts those clients to SDK servers. `src/index.ts` composes clients. Model-free authorities and stdio use live only in `examples`; they are not exported as production identity services. Tests include a packed-package consumer installed outside this repository.

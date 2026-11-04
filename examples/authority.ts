@@ -27,7 +27,7 @@ export function fixtureAuthority() {
       {
         actorID: "respondent",
         name: "Respondent",
-        purpose: "Answer fixture forms",
+        purpose: "Answer fixture asks",
         state: "active",
       },
     ],

@@ -6,18 +6,30 @@ import { test } from "node:test";
 import { fixtureAuthority } from "../examples/authority.js";
 import { createActors } from "../src/actors/index.js";
 import {
-  FormContracts,
+  type Form,
   MessageContracts,
+  type Work,
   WorkContracts,
   WorkspaceError,
 } from "../src/contracts/index.js";
-import { createForms } from "../src/forms/index.js";
 import { bindWorkspace } from "../src/index.js";
 import { openSqlite } from "../src/persistence/index.js";
 import { createWork } from "../src/work/index.js";
 
 const rejects = (code: WorkspaceError["code"]) => (error: unknown) =>
   error instanceof WorkspaceError && error.code === code;
+/** The ask a write or read returns. */
+function ask(record: Work | Form): Form {
+  assert.ok("formID" in record);
+  return record;
+}
+/** Work as a read returns it: with its asks, here none. */
+const listed = (row: Work) => ({ ...row, asks: [] });
+/** The Work a write or read returns. */
+function work(record: Work | Form): Work {
+  assert.ok("ticketID" in record);
+  return record;
+}
 const habit =
   "blocked is gone: ask on the Work with work_update {ticketID, ask}, or keep it active and say what it waits on with waitsOn";
 function next(page: { next: string | null }): string {
@@ -65,92 +77,59 @@ for (const requesterClient of ["human", "software"] as const)
       const ticket = requester.work.create({ title: "Deliver evidence", ownerID: "owner" });
       assert.equal(ticket.status, "open");
       assert.equal(requester.messages.list({ of: "requester" }).items.length, 0);
-      assert.equal(requester.forms.list().items.length, 0);
+      assert.deepEqual(work(requester.work.get({ ticketID: ticket.ticketID })).asks, []);
       const message = requester.messages.send({ recipientID: "owner", text: "Inspect this work" });
       assert.deepEqual(owner.messages.get({ messageID: message.messageID }), message);
       assert.deepEqual(outsider.messages.get({ messageID: message.messageID }), message);
-      assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
-      const form = requester.forms.create({
-        title: "Which option?",
-        collect: true,
-        fields: [
-          {
-            name: "decision",
-            label: "Which option?",
-            required: true,
-            options: [{ value: "yes" }, { value: "no" }],
+      const form = ask(
+        owner.work.update({
+          ticketID: ticket.ticketID,
+          ask: {
+            title: "Which option?",
+            collect: true,
+            fields: [
+              {
+                name: "decision",
+                label: "Which option?",
+                required: true,
+                options: [{ value: "yes" }, { value: "no" }],
+              },
+            ],
           },
-        ],
-      });
-      assert.equal(respondent.forms.get({ formID: form.formID }).formID, form.formID);
-      assert.equal(form.workID, undefined);
-      assert.deepEqual(respondent.work.get({ ticketID: ticket.ticketID }), ticket);
-      assert.deepEqual(outsider.forms.get({ formID: form.formID }), form);
-      assert.throws(
-        () =>
-          respondent.forms.respond({
-            formID: form.formID,
-            expectedRevision: 1,
-            answers: { decision: "maybe" },
-          }),
-        rejects("invalid_input"),
+        }),
       );
-      assert.throws(
-        () => respondent.forms.respond({ formID: form.formID, expectedRevision: 1, answers: {} }),
-        rejects("invalid_input"),
+      assert.equal(form.workID, ticket.ticketID);
+      assert.deepEqual(form.raises, []);
+      assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
+      const shared = work(respondent.work.get({ askID: form.formID }));
+      assert.deepEqual(shared.asks, [form]);
+      assert.deepEqual(outsider.work.get({ askID: form.formID }), shared);
+      for (const answers of [{ decision: "maybe" }, {}])
+        assert.throws(
+          () => respondent.work.answer({ askID: form.formID, answers }),
+          rejects("invalid_input"),
+        );
+      ask(respondent.work.answer({ askID: form.formID, answers: { decision: "no" } }));
+      const response = ask(
+        respondent.work.answer({ askID: form.formID, answers: { decision: "yes" } }),
       );
-      let response = respondent.forms.respond({
-        formID: form.formID,
-        expectedRevision: 1,
-        answers: { decision: "no" },
-      });
-      response = respondent.forms.respond({
-        formID: form.formID,
-        expectedRevision: response.revision,
-        answers: { decision: "yes" },
-      });
       assert.equal(response.history, undefined);
+      assert.equal(response.status, "open");
       assert.deepEqual(
-        respondent.forms
-          .get({ formID: form.formID, history: true })
-          .history?.filter((e) => e.action === "responded")
+        work(respondent.work.get({ askID: form.formID, history: true }))
+          .asks?.[0]?.history?.filter((e) => e.action === "responded")
           .map((e) => e.detail.answers),
         [{ decision: "no" }, { decision: "yes" }],
       );
-      assert.throws(
-        () =>
-          respondent.forms.close({
-            formID: form.formID,
-            expectedRevision: response.revision,
-            status: "resolved",
-            resolution: "Done",
-          }),
-        rejects("forbidden"),
+      const close = { askID: form.formID, status: "resolved" as const, resolution: "Done" };
+      assert.throws(() => respondent.work.update({ close }), rejects("forbidden"));
+      const closed = ask(
+        owner.work.update({ close: { ...close, resolution: "Decision recorded" } }),
       );
-      const closed = requester.forms.close({
-        formID: form.formID,
-        expectedRevision: response.revision,
-        status: "resolved",
-        resolution: "Decision recorded",
-      });
       assert.equal(closed.status, "resolved");
+      assert.throws(() => owner.work.update({ close }), rejects("conflict"));
       assert.throws(
-        () =>
-          requester.forms.close({
-            formID: form.formID,
-            expectedRevision: response.revision,
-            status: "resolved",
-            resolution: "Stale close",
-          }),
-        rejects("conflict"),
-      );
-      assert.throws(
-        () =>
-          respondent.forms.respond({
-            formID: form.formID,
-            expectedRevision: closed.revision,
-            answers: { decision: "no" },
-          }),
+        () => respondent.work.answer({ askID: form.formID, answers: { decision: "no" } }),
         rejects("conflict"),
       );
       assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
@@ -210,12 +189,14 @@ for (const requesterClient of ["human", "software"] as const)
           }),
         rejects("forbidden"),
       );
-      const changes = requester.work.answer({
-        askID: firstSubmissionID,
-        ticketID: ticket.ticketID,
-        answers: { verdict: "changes_requested" },
-        note: "Add second evidence",
-      });
+      const changes = work(
+        requester.work.answer({
+          askID: firstSubmissionID,
+          ticketID: ticket.ticketID,
+          answers: { verdict: "changes_requested" },
+          note: "Add second evidence",
+        }),
+      );
       const second = owner.work.submit({
         ticketID: ticket.ticketID,
         expectedRevision: changes.revision,
@@ -234,12 +215,14 @@ for (const requesterClient of ["human", "software"] as const)
           }),
         rejects("conflict"),
       );
-      const accepted = requester.work.answer({
-        askID: secondSubmissionID,
-        ticketID: ticket.ticketID,
-        answers: { verdict: "accepted" },
-        note: "Evidence checked",
-      });
+      const accepted = work(
+        requester.work.answer({
+          askID: secondSubmissionID,
+          ticketID: ticket.ticketID,
+          answers: { verdict: "accepted" },
+          note: "Evidence checked",
+        }),
+      );
       assert.equal(accepted.review?.reviewerID, "requester");
       assert.equal(accepted.status, "accepted");
       assert.throws(
@@ -252,14 +235,15 @@ for (const requesterClient of ["human", "software"] as const)
         rejects("conflict"),
       );
       f.reopen();
-      const retained = f.as("requester").work.get({ ticketID: ticket.ticketID });
+      const { asks, ...retained } = work(f.as("requester").work.get({ ticketID: ticket.ticketID }));
       assert.deepEqual(retained, accepted);
+      assert.deepEqual(asks, [closed]);
       const history =
         f.as("requester").work.get({ ticketID: ticket.ticketID, history: true }).history ?? [];
       assert.equal(history.filter((e) => e.action === "submitted").length, 2);
       assert.equal(history.filter((e) => e.action === "reviewed").length, 2);
       assert.deepEqual(f.as("owner").messages.get({ messageID: message.messageID }), message);
-      assert.deepEqual(f.as("respondent").forms.get({ formID: form.formID }), closed);
+      assert.deepEqual(work(f.as("respondent").work.get({ askID: form.formID })).asks, [closed]);
       assert.equal(
         f.as("requester").work.list({ status: ["accepted"] }).items[0]?.ticketID,
         ticket.ticketID,
@@ -288,91 +272,127 @@ test("direct messages need no work and arbitrary prose creates no record", (t) =
   );
   assert.throws(
     () =>
-      requester.forms.create({
-        workID: "absent",
-        title: "Question",
-        fields: [{ name: "x", label: "Question", required: true }],
+      owner.work.update({
+        ticketID: "absent",
+        ask: { title: "Question", fields: [{ name: "x", label: "Question", required: true }] },
       }),
     rejects("not_found"),
   );
 });
 
-test("shared standalone and linked Form reads never consult Work; linked creation validates Work", (t) => {
+test("an ask sits on Work its asker owns, and a 0.5 ask reads where it was left", (t) => {
   const f = fixture(t);
   const requester = f.as("requester");
   const owner = f.as("owner");
   const outsider = f.as("outsider");
-  const withoutWork = createForms(requester.actors, f.store);
-  const trap = { get: () => assert.fail("standalone Form consulted Work") };
-  const directed = createForms(owner.actors, f.store, trap);
-  const observer = createForms(outsider.actors, f.store, trap);
-  const input = {
+  const question = {
     title: "Which option?",
-    fields: [{ name: "answer", label: "Which option?", required: true }],
+    fields: [{ name: "answer", label: "Which?", required: true }],
   };
-  const form = createForms(requester.actors, f.store, trap).create(input);
-  assert.deepEqual(directed.get({ formID: form.formID }), form);
-  assert.deepEqual(directed.list().items, [form]);
-  assert.deepEqual(observer.list().items, [form]);
-  assert.deepEqual(observer.get({ formID: form.formID }), form);
+  const ticket = requester.work.create({ title: "Linked context", ownerID: "owner" });
+  const own = requester.work.create({ title: "The root's own" });
+  for (const [by, ticketID, code] of [
+    [outsider, ticket.ticketID, "forbidden"],
+    [requester, own.ticketID, "forbidden"],
+    [owner, "absent", "not_found"],
+  ] as const)
+    assert.throws(() => by.work.update({ ticketID, ask: question }), rejects(code));
+  for (const input of [
+    { ticketID: ticket.ticketID, ask: { ...question, cause: "carried" } },
+    { ticketID: ticket.ticketID, ask: { ...question, workID: ticket.ticketID } },
+    { ticketID: ticket.ticketID, ask: question, progress: "Both" },
+    { ticketID: ticket.ticketID, ask: question, expectedRevision: 1 },
+    { ask: question },
+    { ticketID: ticket.ticketID, close: { askID: "x", status: "resolved", resolution: "x" } },
+    {
+      ticketID: ticket.ticketID,
+      ask: { ...question, fields: [question.fields[0], question.fields[0]] },
+    },
+    {
+      ticketID: ticket.ticketID,
+      ask: {
+        ...question,
+        fields: [
+          { name: "a", label: "A", required: true, options: [{ value: "x" }], recommended: "y" },
+        ],
+      },
+    },
+  ])
+    assert.throws(() => owner.work.update(input as never), rejects("invalid_input"));
+  const linked = ask(owner.work.update({ ticketID: ticket.ticketID, ask: question }));
+  assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
+  assert.deepEqual(work(outsider.work.get({ askID: linked.formID })).asks, [linked]);
+  // Asks 0.5 stored: one with no Work and a cause, and one by another Actor on this Work.
+  const at = new Date().toISOString();
+  const stored = (formID: string, requesterID: string, extra: object) => {
+    const row = {
+      formID,
+      requesterID,
+      title: formID,
+      links: [],
+      approval: false,
+      collect: false,
+      fields: [{ name: "answer", label: "Which?", required: true }],
+      status: "open",
+      createdAt: at,
+      responses: {},
+      ...extra,
+    } as never;
+    f.store.transaction(() =>
+      f.store.forms.save(formID, row, { actorID: requesterID, at, action: "created", detail: row }),
+    );
+  };
+  stored("orphan", "respondent", { cause: "carried" });
+  stored("foreign", "outsider", { workID: ticket.ticketID });
+  const orphan = ask(outsider.work.get({ askID: "orphan", history: true }));
+  assert.equal(Object.hasOwn(orphan, "cause"), false);
+  assert.deepEqual(orphan.raises, []);
+  assert.equal(orphan.history?.[0]?.detail.cause, "carried");
+  assert.deepEqual(
+    work(outsider.work.get({ ticketID: ticket.ticketID })).asks?.map((row) => row.formID),
+    [linked.formID, "foreign"],
+  );
+  assert.deepEqual(
+    requester.work.asks({ requesterID: "respondent" }).items.map((row) => row.formID),
+    ["orphan"],
+  );
+  // A 0.5 ask with no Work routes like any ask: respondent's to its manager, owner.
+  assert.deepEqual(
+    requester.work.asks({ routedTo: "owner" }).items.map((row) => row.formID),
+    ["orphan"],
+  );
+  assert.equal(
+    ask(owner.work.answer({ askID: "orphan", answers: { answer: "yes" } })).status,
+    "resolved",
+  );
   assert.throws(
     () =>
-      observer.close({
-        formID: form.formID,
-        expectedRevision: 1,
-        status: "resolved",
-        resolution: "Unrelated reader",
-      }),
-    rejects("forbidden"),
-  );
-  assert.throws(() => withoutWork.create({ ...input, cause: "absent" }), rejects("not_found"));
-  const ticket = requester.work.create({ title: "Optional linked context", ownerID: "owner" });
-  assert.throws(
-    () => withoutWork.create({ ...input, workID: ticket.ticketID }),
-    rejects("invalid_input"),
-  );
-  const linked = outsider.forms.create({ ...input, workID: ticket.ticketID });
-  assert.deepEqual(observer.get({ formID: linked.formID }), linked);
-  assert.deepEqual(withoutWork.get({ formID: linked.formID }), linked);
-  assert.deepEqual(observer.list().items, [form, linked]);
-  assert.throws(
-    () =>
-      outsider.work.update({
-        ticketID: ticket.ticketID,
-        expectedRevision: 1,
-        goal: "Unrelated edit",
-      }),
-    rejects("forbidden"),
-  );
-  assert.throws(
-    () =>
-      outsider.work.submit({
-        ticketID: ticket.ticketID,
-        expectedRevision: 1,
-        result: "Unrelated result",
-        evidence: [],
-      }),
-    rejects("forbidden"),
-  );
-  assert.throws(
-    () =>
-      outsider.work.answer({
-        askID: "absent",
-        ticketID: ticket.ticketID,
-        answers: { verdict: "accepted" },
-        note: "Unrelated review",
-      }),
+      owner.work.answer({ askID: linked.formID, ticketID: own.ticketID, answers: { answer: "x" } }),
     rejects("not_found"),
   );
-  assert.equal(owner.forms.get({ formID: linked.formID }).workID, ticket.ticketID);
-  requester.work.update({ ticketID: ticket.ticketID, expectedRevision: 1, ownerID: "outsider" });
-  assert.deepEqual(owner.forms.get({ formID: linked.formID }), linked);
-  assert.deepEqual(
-    owner.forms.list().items.map((row) => row.formID),
-    [form.formID, linked.formID],
+  // Reassigning the Work cancels its open asks, the 0.5 one included (Q12).
+  const moved = work(
+    requester.work.update({
+      ticketID: ticket.ticketID,
+      expectedRevision: 1,
+      ownerID: "respondent",
+    }),
   );
-  assert.equal(outsider.forms.get({ formID: linked.formID }).formID, linked.formID);
-  assert.equal(f.as("respondent").forms.get({ formID: linked.formID }).formID, linked.formID);
+  assert.equal(moved.asks, undefined);
+  const cancelled =
+    work(outsider.work.get({ ticketID: ticket.ticketID, history: true })).asks ?? [];
+  assert.deepEqual(
+    cancelled.map((row) => [row.status, row.resolution?.reason, row.resolution?.text]),
+    [
+      ["cancelled", "reassigned", "Cancelled with the Work's reassignment."],
+      ["cancelled", "reassigned", "Cancelled with the Work's reassignment."],
+    ],
+  );
+  assert.deepEqual(
+    cancelled.map((row) => row.history?.at(-1)?.actorID),
+    ["requester", "requester"],
+  );
+  assert.equal(cancelled[0]?.resolution?.at, moved.updatedAt);
 });
 
 test("revision conflicts across independent SQLite connections roll back snapshots and history", async (t) => {
@@ -417,37 +437,22 @@ test("revision conflicts across independent SQLite connections roll back snapsho
   assert.equal(f.store.work.get("rolled-back"), undefined);
   assert.deepEqual(f.store.work.history("rolled-back"), []);
   assert.equal(f.store.work.head(), head);
-  const form = f.as("requester").forms.create({
-    workID: ticket.ticketID,
-    title: "Answer?",
-    collect: true,
-    fields: [{ name: "x", label: "Answer?", required: true }],
-  });
-  f.as("owner").forms.respond({
-    formID: form.formID,
-    expectedRevision: 1,
-    answers: { x: "first answer" },
-  });
+  const question = ask(
+    f.as("owner").work.update({
+      ticketID: ticket.ticketID,
+      ask: { title: "Answer?", fields: [{ name: "x", label: "Answer?", required: true }] },
+    }),
+  );
+  ask(f.as("respondent").work.answer({ askID: question.formID, answers: { x: "first answer" } }));
   assert.throws(
-    () =>
-      f.as("requester").forms.close({
-        formID: form.formID,
-        expectedRevision: 1,
-        status: "cancelled",
-        resolution: "Stale close",
-      }),
+    () => other.work.answer({ askID: question.formID, answers: { x: "lost answer" } }),
     rejects("conflict"),
   );
-  assert.throws(
-    () =>
-      other.forms.respond({
-        formID: form.formID,
-        expectedRevision: 1,
-        answers: { x: "lost answer" },
-      }),
-    rejects("conflict"),
+  assert.equal(
+    work(f.as("owner").work.get({ askID: question.formID, history: true })).asks?.[0]?.history
+      ?.length,
+    2,
   );
-  assert.equal(f.as("owner").forms.get({ formID: form.formID, history: true }).history?.length, 2);
 });
 
 test("multi-page filtered upserts, duplicate updated rows and disappearing matches survive reopen", (t) => {
@@ -512,7 +517,6 @@ test("multi-page filtered upserts, duplicate updated rows and disappearing match
     () => f.as("owner").work.list({ ownerID: "owner", order: "recent", after: owned }),
     rejects("invalid_input"),
   );
-  assert.throws(() => f.as("owner").forms.list({ after: owned }), rejects("invalid_input"));
   assert.throws(() => f.as("owner").work.list({ limit: 101 }), rejects("invalid_input"));
   f.as("outsider").messages.send({
     recipientID: "respondent",
@@ -535,34 +539,26 @@ test("multi-page filtered upserts, duplicate updated rows and disappearing match
     () => f.as("owner").messages.list({ ...pair, after: 999 }),
     rejects("invalid_input"),
   );
-  f.as("outsider").forms.create({
-    workID: hidden.ticketID,
-    title: "Different requester",
-    fields: [{ name: "x", label: "Different requester", required: true }],
-  });
-  const forms = [first, second].map((ticket) =>
-    f.as("requester").forms.create({
-      workID: ticket.ticketID,
-      title: "Answer?",
-      fields: [{ name: "x", label: "Answer?", required: true }],
-    }),
+  const question = { title: "Answer?", fields: [{ name: "x", label: "Answer?", required: true }] };
+  f.as("outsider").work.update({ ticketID: hidden.ticketID, ask: question });
+  const asks = [first, second].map((ticket) =>
+    ask(f.as("owner").work.update({ ticketID: ticket.ticketID, ask: question })),
   );
-  const forms1 = f.as("owner").forms.list({ requesterID: "requester", limit: 1 });
-  assert.equal(forms1.items.length, 1);
-  f.as("owner").forms.respond({
-    formID: forms[0]?.formID ?? "",
-    expectedRevision: 1,
-    answers: { x: "answered" },
-  });
+  const asks1 = f.as("requester").work.asks({ requesterID: "owner", limit: 1 });
+  assert.deepEqual(asks1.items, [asks[0]]);
+  f.as("respondent").work.answer({ askID: asks[0]?.formID ?? "", answers: { x: "answered" } });
   f.reopen();
   assert.deepEqual(
     f
-      .as("owner")
-      .forms.list({ requesterID: "requester", after: next(forms1) })
+      .as("requester")
+      .work.asks({ requesterID: "owner", after: next(asks1) })
       .items.map((row) => row.formID),
-    [forms[1]?.formID, forms[0]?.formID],
+    [asks[1]?.formID, asks[0]?.formID],
   );
-  assert.throws(() => f.as("owner").forms.list({ after: 999 } as never), rejects("invalid_input"));
+  assert.throws(
+    () => f.as("requester").work.asks({ requesterID: "owner", after: owned }),
+    rejects("invalid_input"),
+  );
 });
 
 test("shared Work/Form AND filters precede pagination; awaiting means open, designated and no response entry", (t) => {
@@ -576,7 +572,7 @@ test("shared Work/Form AND filters precede pagination; awaiting means open, desi
   f.as("owner").work.update({ ticketID: active.ticketID, expectedRevision: 1, status: "active" });
   const second = request.work.create({ title: "Second match", ownerID: "owner" });
   assert.equal(observer.work.list().items.length, 5);
-  assert.deepEqual(observer.work.get({ ticketID: first.ticketID }), first);
+  assert.deepEqual(observer.work.get({ ticketID: first.ticketID }), listed(first));
   const workFilters = {
     ownerID: "owner",
     requesterID: "requester",
@@ -584,10 +580,10 @@ test("shared Work/Form AND filters precede pagination; awaiting means open, desi
     limit: 1,
   };
   const page = observer.work.list(workFilters);
-  assert.deepEqual(page.items, [first]);
+  assert.deepEqual(page.items, [listed(first)]);
   const following = observer.work.list({ ...workFilters, after: next(page) });
   assert.deepEqual(following, {
-    items: [second],
+    items: [listed(second)],
     next: null,
     actors: { owner: { name: "Owner" }, requester: { name: "Requester" } },
   });
@@ -602,51 +598,56 @@ test("shared Work/Form AND filters precede pagination; awaiting means open, desi
   });
 
   const fields = [{ name: "answer", label: "Optional answer", required: false }];
-  const create = (by: string, workID?: string) =>
-    f.as(by).forms.create({
-      title: "Optional answer",
-      fields,
-      ...(workID === undefined ? {} : { workID }),
-    });
-  create("outsider", first.ticketID);
-  const pending = create("requester", first.ticketID);
-  const closing = create("requester", first.ticketID);
-  const closed = request.forms.close({
-    formID: closing.formID,
-    expectedRevision: 1,
-    status: "cancelled",
-    resolution: "Cancelled without responses",
-  });
-  create("requester", otherOwner.ticketID);
-  const responding = create("requester", first.ticketID);
-  const answered = f.as("owner").forms.respond({ formID: responding.formID, answers: {} });
-  const last = create("requester", first.ticketID);
-  const standalone = create("requester");
-  assert.equal(observer.forms.list().items.length, 7);
-  assert.deepEqual(observer.forms.get({ formID: standalone.formID }), standalone);
-  const formFilters = {
-    workID: first.ticketID,
-    requesterID: "requester",
-    status: ["open" as const],
-    limit: 1,
-  };
-  const forms1 = observer.forms.list(formFilters);
-  assert.deepEqual(forms1.items, [pending]);
-  const forms2 = observer.forms.list({ ...formFilters, after: next(forms1) });
-  assert.deepEqual(forms2.items, [last]);
-  assert.equal(forms2.next, null);
-  assert.deepEqual(observer.forms.list({ status: ["cancelled"] }).items, [closed]);
-  assert.deepEqual(observer.forms.list({ status: ["resolved"] }).items, [answered]);
-  assert.deepEqual(observer.forms.list({ requesterID: "absent" }), {
+  const create = (ticketID: string) =>
+    ask(f.as("owner").work.update({ ticketID, ask: { title: "Optional answer", fields } }));
+  const pending = create(first.ticketID);
+  const closing = create(first.ticketID);
+  const closed = ask(
+    f.as("owner").work.update({
+      close: {
+        askID: closing.formID,
+        status: "cancelled",
+        resolution: "Cancelled without answers",
+      },
+    }),
+  );
+  const responding = create(first.ticketID);
+  const answered = ask(f.as("respondent").work.answer({ askID: responding.formID, answers: {} }));
+  const elsewhere = ask(
+    f
+      .as("outsider")
+      .work.update({ ticketID: otherOwner.ticketID, ask: { title: "Theirs", fields } }),
+  );
+  const last = create(first.ticketID);
+  // work_list items carry only their open asks; work_get carries all of them.
+  const page100 = observer.work.list({ ...workFilters, limit: 100 }).items;
+  assert.deepEqual(
+    page100.map((item) => [item.ticketID, item.asks?.map((row) => row.formID)]),
+    [
+      [first.ticketID, [pending.formID, last.formID]],
+      [second.ticketID, []],
+    ],
+  );
+  assert.deepEqual(
+    work(observer.work.get({ ticketID: first.ticketID })).asks?.map((row) => row.formID),
+    [pending.formID, closing.formID, responding.formID, last.formID],
+  );
+  const query = { requesterID: "owner", status: ["open" as const], limit: 1 };
+  const asks1 = observer.work.asks(query);
+  assert.deepEqual(asks1.items, [pending]);
+  const asks2 = observer.work.asks({ ...query, after: next(asks1) });
+  assert.deepEqual(asks2.items, [last]);
+  assert.equal(asks2.next, null);
+  assert.deepEqual(observer.work.asks({ status: ["cancelled"] }).items, [closed]);
+  assert.deepEqual(observer.work.asks({ status: ["resolved"] }).items, [answered]);
+  assert.deepEqual(observer.work.asks({ requesterID: "outsider" }).items, [elsewhere]);
+  assert.deepEqual(observer.work.asks({ requesterID: "absent" }), {
     items: [],
     next: null,
     actors: {},
   });
   f.reopen();
-  assert.deepEqual(f.as("outsider").forms.list({ ...formFilters, limit: 100 }).items, [
-    pending,
-    last,
-  ]);
+  assert.deepEqual(f.as("outsider").work.asks({ ...query, limit: 100 }).items, [pending, last]);
 });
 
 test("canonical membership includes deep and closed ancestry under the actual active caller", () => {
@@ -729,12 +730,14 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     evidence: [],
   });
   assert.ok(submitted.submission);
-  const accepted = requester.work.answer({
-    askID: submitted.submission.submissionID,
-    ticketID: ticket.ticketID,
-    answers: { verdict: "accepted" },
-    note: "Reviewed",
-  });
+  const accepted = work(
+    requester.work.answer({
+      askID: submitted.submission.submissionID,
+      ticketID: ticket.ticketID,
+      answers: { verdict: "accepted" },
+      note: "Reviewed",
+    }),
+  );
   const query = {
     ownerID: "respondent",
     requesterID: "owner",
@@ -746,7 +749,7 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
   let after: string | undefined;
   for (let i = 0; i < expected.length; i += 2) {
     const page = observer.work.list({ ...query, ...(after === undefined ? {} : { after }) });
-    assert.deepEqual(page.items, expected.slice(i, i + 2));
+    assert.deepEqual(page.items, expected.slice(i, i + 2).map(listed));
     assert.equal(page.next === null, i + 2 >= expected.length);
     after = page.next ?? undefined;
   }
@@ -768,15 +771,17 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
       }),
     rejects("forbidden"),
   );
-  const moved = requester.work.update({
-    ticketID: first.ticketID,
-    expectedRevision: 1,
-    ownerID: "outsider",
-  });
+  const moved = work(
+    requester.work.update({
+      ticketID: first.ticketID,
+      expectedRevision: 1,
+      ownerID: "outsider",
+    }),
+  );
   assert.deepEqual(observer.work.list({ ...query, updatedSince: moved.updatedAt }).items, []);
   assert.deepEqual(
     observer.work.list({ ownerID: "outsider", updatedSince: moved.updatedAt }).items,
-    [moved],
+    [listed(moved)],
   );
   const openMessage = requester.messages.send({
     recipientID: "respondent",
@@ -786,14 +791,17 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
   for (const [id, row] of f.rows)
     if (f.authority.within("outsider", id, "owner")) f.rows.set(id, { ...row, state: "closed" });
   f.reopen();
-  assert.deepEqual(f.as("outsider").work.list({ ...query, limit: 100 }).items, expected.slice(1));
+  assert.deepEqual(
+    f.as("outsider").work.list({ ...query, limit: 100 }).items,
+    expected.slice(1).map(listed),
+  );
   assert.deepEqual(
     f
       .as("outsider")
       .work.list({ ownerWithin: "owner", requesterWithin: "owner", status: ["accepted"] }).items,
-    [accepted],
+    [listed(accepted)],
   );
-  assert.deepEqual(f.as("outsider").work.get({ ticketID: first.ticketID }), moved);
+  assert.deepEqual(f.as("outsider").work.get({ ticketID: first.ticketID }), listed(moved));
   assert.equal(moved.history, undefined);
   const histories = [first, accepted].map(
     ({ ticketID }) => f.as("outsider").work.get({ ticketID, history: true }).history?.length,
@@ -806,11 +814,6 @@ test("subtree filters read membership once per Actor, not once per row", (t) => 
   const requester = f.as("requester");
   for (let i = 0; i < 30; i++)
     requester.work.create({ title: `Row ${i}`, ownerID: i % 2 === 0 ? "owner" : "outsider" });
-  requester.forms.create({ title: "Ask", fields: [{ name: "x", label: "X", required: true }] });
-  f.as("respondent").forms.create({
-    title: "Ask",
-    fields: [{ name: "x", label: "X", required: true }],
-  });
   const within = f.authority.within;
   let reads = 0;
   f.authority.within = (...args) => {
@@ -826,9 +829,8 @@ test("subtree filters read membership once per Actor, not once per row", (t) => 
   );
   assert.equal(reads, 1);
   reads = 0;
-  assert.equal(requester.forms.list({ requesterWithin: "owner" }).items.length, 1);
-  assert.equal(requester.forms.list({ requesterWithin: "requester" }).items.length, 2);
-  assert.equal(reads, 4);
+  assert.equal(requester.work.list({ requesterWithin: "requester" }).items.length, 30);
+  assert.equal(reads, 1);
 });
 
 test("a subtree list reads up to the head it captured while another connection writes", (t) => {
@@ -838,6 +840,7 @@ test("a subtree list reads up to the head it captured while another connection w
   const written: string[] = [];
   const work = createWork(createActors(f.authority, "requester"), {
     transaction: f.store.transaction,
+    forms: f.store.forms,
     work: {
       ...f.store.work,
       values(column, filter) {
@@ -849,7 +852,7 @@ test("a subtree list reads up to the head it captured while another connection w
       },
     },
   });
-  assert.deepEqual(work.list({ ownerWithin: "requester" }).items, [first]);
+  assert.deepEqual(work.list({ ownerWithin: "requester" }).items, [listed(first)]);
   assert.deepEqual(
     f
       .as("requester")
@@ -870,71 +873,67 @@ test("an ask is answered by any Actor and resolves on the first answer unless it
     options: [{ value: "Publish after CI", detail: "Waits about ten minutes" }, { value: "Hold" }],
     recommended: "Publish after CI",
   };
-  const ask = asker.forms.create({
-    title: "Publish 0.5.0?",
-    context: "CI is running on the release commit.",
-    links: [{ label: "Release PR", url: "https://example.test/pull/9" }],
-    workID: ticket.ticketID,
-    fields: [choice],
-  });
+  const asked = ask(
+    asker.work.update({
+      ticketID: ticket.ticketID,
+      ask: {
+        title: "Publish 0.5.0?",
+        context: "CI is running on the release commit.",
+        links: [{ label: "Release PR", url: "https://example.test/pull/9" }],
+        fields: [choice],
+      },
+    }),
+  );
   assert.deepEqual(
     {
-      requesterID: ask.requesterID,
-      approval: ask.approval,
-      collect: ask.collect,
-      status: ask.status,
-      responses: ask.responses,
+      requesterID: asked.requesterID,
+      workID: asked.workID,
+      approval: asked.approval,
+      collect: asked.collect,
+      status: asked.status,
+      responses: asked.responses,
     },
-    { requesterID: "owner", approval: false, collect: false, status: "open", responses: {} },
+    {
+      requesterID: "owner",
+      workID: ticket.ticketID,
+      approval: false,
+      collect: false,
+      status: "open",
+      responses: {},
+    },
   );
-  for (const fields of [
-    [{ ...choice, recommended: "Later" }],
-    [{ name: "text", label: "Why?", required: true, recommended: "Because" }],
-    [{ ...choice, options: [{ value: "Hold" }, { value: "Hold", detail: "Twice" }] }],
-  ])
-    assert.throws(() => asker.forms.create({ title: "Invalid", fields }), rejects("invalid_input"));
-  for (const respondentIDs of [["requester"], []])
-    assert.throws(
-      () => asker.forms.create({ title: "Directed", respondentIDs, fields: [choice] } as never),
-      rejects("invalid_input"),
-    );
-  assert.throws(
-    () => asker.forms.create({ title: "Carried", cause: "absent", fields: [choice] }),
-    rejects("not_found"),
+  const answered = ask(
+    f.as("outsider").work.answer({
+      askID: asked.formID,
+      answers: { choice: "Hold" },
+      note: "Wait for the changelog",
+    }),
   );
-  const answered = f.as("outsider").forms.respond({
-    formID: ask.formID,
-    answers: { choice: "Hold" },
-    note: "Wait for the changelog",
-  });
   assert.equal(answered.status, "resolved");
-  assert.deepEqual(Object.keys(answered.responses), ["outsider"]);
   assert.deepEqual(answered.responses.outsider, {
     answers: { choice: "Hold" },
     note: "Wait for the changelog",
     at: answered.updatedAt,
   });
   assert.throws(
-    () => f.as("requester").forms.respond({ formID: ask.formID, answers: { choice: "Hold" } }),
+    () => f.as("requester").work.answer({ askID: asked.formID, answers: { choice: "Hold" } }),
     rejects("conflict"),
   );
-  const carried = f.as("requester").forms.create({
-    title: "Owner asks to publish",
-    cause: ask.formID,
-    collect: true,
-    fields: [{ name: "view", label: "Your view?", required: false }],
-  });
-  assert.equal(carried.cause, ask.formID);
-  const first = f.as("respondent").forms.respond({ formID: carried.formID, answers: {} });
-  const revised = f.as("respondent").forms.respond({
-    formID: carried.formID,
-    answers: { view: "Ship it" },
-  });
-  const second = f.as("requester").forms.respond({
-    formID: carried.formID,
-    expectedRevision: revised.revision,
-    answers: { view: "Agreed" },
-  });
+  const collecting = ask(
+    asker.work.update({
+      ticketID: ticket.ticketID,
+      ask: {
+        title: "Your views?",
+        collect: true,
+        fields: [{ name: "view", label: "Your view?", required: false }],
+      },
+    }),
+  );
+  const first = ask(f.as("respondent").work.answer({ askID: collecting.formID, answers: {} }));
+  f.as("respondent").work.answer({ askID: collecting.formID, answers: { view: "Ship it" } });
+  const second = ask(
+    f.as("requester").work.answer({ askID: collecting.formID, answers: { view: "Agreed" } }),
+  );
   assert.equal(first.status, "open");
   assert.equal(second.status, "open");
   assert.deepEqual(
@@ -944,77 +943,285 @@ test("an ask is answered by any Actor and resolves on the first answer unless it
       ["requester", { view: "Agreed" }],
     ],
   );
-  assert.throws(
-    () =>
-      f.as("outsider").forms.respond({
-        formID: carried.formID,
-        expectedRevision: first.revision,
-        answers: {},
-      }),
-    rejects("conflict"),
+  const closed = ask(
+    asker.work.update({
+      close: { askID: collecting.formID, status: "resolved", resolution: "Both views recorded" },
+    }),
   );
-  const closed = f.as("requester").forms.close({
-    formID: carried.formID,
-    expectedRevision: second.revision,
-    status: "resolved",
-    resolution: "Both views recorded",
-  });
-  assert.equal(closed.status, "resolved");
-  assert.deepEqual(f.as("outsider").forms.list({ requesterWithin: "requester", order: "recent" }), {
-    items: [closed, answered],
+  assert.deepEqual(closed.resolution, { text: "Both views recorded", at: closed.updatedAt });
+  assert.deepEqual(f.as("outsider").work.asks({ requesterID: "owner", answeredBy: "requester" }), {
+    items: [closed],
     next: null,
     actors: {
-      outsider: { name: "Outsider" },
       owner: { name: "Owner" },
       requester: { name: "Requester" },
       respondent: { name: "Respondent" },
     },
   });
+  assert.deepEqual(
+    f.as("outsider").work.asks({ requesterID: "owner", answeredBy: "outsider" }).items,
+    [answered],
+  );
 });
 
 test("only the asker's managers answer an approval, up to the root and never the asker", (t) => {
   const f = fixture(t);
-  const approval = (by: string) =>
-    f.as(by).forms.create({
-      title: "Run the migration?",
-      approval: true,
-      fields: [
-        {
-          name: "decision",
-          label: "Run it?",
-          required: true,
-          options: [{ value: "Run" }, { value: "Hold" }],
+  const approval = (by: string) => {
+    const ticket = f.as(by).work.create({ title: "Migrate" });
+    return ask(
+      f.as(by).work.update({
+        ticketID: ticket.ticketID,
+        ask: {
+          title: "Run the migration?",
+          approval: true,
+          fields: [
+            {
+              name: "decision",
+              label: "Run it?",
+              required: true,
+              options: [{ value: "Run" }, { value: "Hold" }],
+            },
+          ],
         },
-      ],
-    });
+      }),
+    );
+  };
   const answer = { answers: { decision: "Run" } };
-  const ask = approval("respondent");
-  assert.equal(ask.approval, true);
+  const asked = approval("respondent");
+  assert.equal(asked.approval, true);
   for (const by of ["respondent", "outsider"])
     assert.throws(
-      () => f.as(by).forms.respond({ formID: ask.formID, ...answer }),
+      () => f.as(by).work.answer({ askID: asked.formID, ...answer }),
       rejects("forbidden"),
     );
-  assert.equal(f.as("owner").forms.respond({ formID: ask.formID, ...answer }).status, "resolved");
-  const deeper = approval("respondent");
   assert.equal(
-    f.as("requester").forms.respond({ formID: deeper.formID, ...answer }).status,
+    ask(f.as("owner").work.answer({ askID: asked.formID, ...answer })).status,
     "resolved",
   );
-  const root = approval("requester");
-  for (const by of ["requester", "owner", "respondent", "outsider"])
+  const deeper = approval("respondent");
+  assert.equal(
+    ask(f.as("requester").work.answer({ askID: deeper.formID, ...answer })).status,
+    "resolved",
+  );
+  assert.throws(() => approval("requester"), rejects("forbidden"));
+});
+
+test("a raise passes an open ask one manager up, past closed managers, and never resolves it", (t) => {
+  const f = fixture(t);
+  // respondent reports to owner, who reports to the root, requester.
+  const ticket = f.as("respondent").work.create({ title: "Pick a region" });
+  const question = {
+    title: "Which region?",
+    fields: [{ name: "region", label: "Region", required: true }],
+  };
+  const asked = ask(f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }));
+  const routed = (actorID: string) =>
+    f
+      .as("outsider")
+      .work.asks({ routedTo: actorID })
+      .items.map((row) => row.formID);
+  assert.deepEqual(routed("owner"), [asked.formID]);
+  assert.deepEqual(routed("requester"), []);
+  // An Actor's own asks route to its manager, never to itself.
+  const mine = f.as("owner").work.create({ title: "Owner's own" });
+  const own = ask(f.as("owner").work.update({ ticketID: mine.ticketID, ask: question }));
+  assert.deepEqual(routed("owner"), [asked.formID]);
+  assert.deepEqual(routed("requester"), [own.formID]);
+  const page = f.as("outsider").work.asks({ routedTo: "requester", limit: 1 });
+  assert.deepEqual(page.items, [own]);
+  assert.equal(page.next, null);
+  f.as("owner").work.update({
+    close: { askID: own.formID, status: "cancelled", resolution: "Mine" },
+  });
+  for (const by of ["requester", "respondent", "outsider"])
     assert.throws(
-      () => f.as(by).forms.respond({ formID: root.formID, ...answer }),
+      () => f.as(by).work.answer({ askID: asked.formID, raise: true }),
       rejects("forbidden"),
     );
+  const raised = ask(f.as("owner").work.answer({ askID: asked.formID, raise: true }));
+  assert.equal(raised.status, "open");
+  assert.deepEqual(f.as("outsider").work.asks({ answeredBy: "owner" }).items, []);
+  assert.deepEqual(raised.raises, [{ actorID: "owner", at: raised.updatedAt }]);
+  assert.deepEqual(routed("owner"), []);
+  assert.deepEqual(routed("requester"), [asked.formID]);
+  assert.deepEqual(
+    work(f.as("outsider").work.get({ askID: asked.formID, history: true })).asks?.[0]?.history?.at(
+      -1,
+    )?.action,
+    "raised",
+  );
+  // The root raises nothing: it has no manager.
+  assert.throws(
+    () => f.as("requester").work.answer({ askID: asked.formID, raise: true }),
+    rejects("forbidden"),
+  );
+  const answered = ask(
+    f.as("owner").work.answer({ askID: asked.formID, answers: { region: "eu-west" } }),
+  );
+  assert.deepEqual(answered.raises, raised.raises);
+  assert.equal(answered.status, "resolved");
+  assert.deepEqual(routed("requester"), []);
+  assert.throws(
+    () => f.as("requester").work.answer({ askID: asked.formID, raise: true }),
+    rejects("conflict"),
+  );
+  // A closed manager is skipped: the ask routes to the nearest open one.
+  const skipped = ask(f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }));
+  const owner = f.rows.get("owner");
+  assert.ok(owner);
+  f.rows.set("owner", { ...owner, state: "closed" });
+  assert.deepEqual(routed("requester"), [skipped.formID]);
+  assert.deepEqual(
+    f.as("requester").work.asks({ routedTo: "requester", status: ["resolved"] }).items,
+    [],
+  );
+  assert.throws(
+    () => f.as("requester").work.answer({ askID: skipped.formID, raise: true }),
+    rejects("forbidden"),
+  );
+});
+
+test("a closed manager's stand-in raises an ask routed past it", (t) => {
+  const f = fixture(t);
+  // deep reports to respondent, which reports to owner, under the root, requester.
+  const template = f.rows.get("respondent");
+  assert.ok(template);
+  f.rows.set("deep", { ...template, actorID: "deep", name: "Deep" });
+  f.managers.set("deep", "respondent");
+  const ticket = f.as("deep").work.create({ title: "Deep work" });
+  const asked = ask(
+    f.as("deep").work.update({
+      ticketID: ticket.ticketID,
+      ask: { title: "Proceed?", fields: [{ name: "x", label: "Proceed?", required: true }] },
+    }),
+  );
+  f.rows.set("respondent", { ...template, state: "closed" });
+  assert.throws(
+    () => f.as("requester").work.answer({ askID: asked.formID, raise: true }),
+    rejects("forbidden"),
+  );
+  const raised = ask(f.as("owner").work.answer({ askID: asked.formID, raise: true }));
+  assert.deepEqual(
+    raised.raises.map((raise) => raise.actorID),
+    ["owner"],
+  );
+  assert.deepEqual(
+    f
+      .as("outsider")
+      .work.asks({ routedTo: "requester" })
+      .items.map((row) => row.formID),
+    [asked.formID],
+  );
+});
+
+test("a cancel that also reassigns cancels the open asks as cancelled", (t) => {
+  const f = fixture(t);
+  const ticket = f.as("requester").work.create({ title: "Both", ownerID: "owner" });
+  const asked = ask(
+    f.as("owner").work.update({
+      ticketID: ticket.ticketID,
+      ask: { title: "Go?", fields: [{ name: "x", label: "Go?", required: true }] },
+    }),
+  );
+  const done = work(
+    f.as("requester").work.update({
+      ticketID: ticket.ticketID,
+      expectedRevision: 1,
+      ownerID: "respondent",
+      status: "cancelled",
+    }),
+  );
+  assert.deepEqual([done.status, done.ownerID], ["cancelled", "respondent"]);
+  const [after] = work(f.as("owner").work.get({ askID: asked.formID })).asks ?? [];
+  assert.equal(after?.resolution?.reason, "cancelled");
+});
+
+test("the asker closes its ask, or its nearest open manager once it is closed, on frozen Work too", (t) => {
+  const f = fixture(t);
+  const ticket = f.as("requester").work.create({ title: "Review", ownerID: "respondent" });
+  const question = {
+    title: "Ready?",
+    collect: true,
+    fields: [{ name: "x", label: "Ready?", required: false }],
+  };
+  const open = ask(f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }));
+  const later = ask(f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }));
+  const close = (askID: string) => ({
+    close: { askID, status: "resolved" as const, resolution: "Done" },
+  });
+  assert.throws(() => f.as("owner").work.update(close(open.formID)), rejects("forbidden"));
+  ask(f.as("respondent").work.update(close(open.formID)));
+  assert.throws(() => f.as("respondent").work.update(close(open.formID)), rejects("conflict"));
+  // Submitting cancels the open asks; asking on frozen Work is refused.
+  const sent = work(f.as("respondent").work.submit({ ticketID: ticket.ticketID, result: "Done" }));
+  const after = work(f.as("outsider").work.get({ ticketID: ticket.ticketID })).asks ?? [];
+  assert.deepEqual(
+    after.map((row) => [row.formID, row.status, row.resolution?.reason]),
+    [
+      [open.formID, "resolved", undefined],
+      [later.formID, "cancelled", "submitted"],
+    ],
+  );
+  assert.equal(after[1]?.resolution?.at, sent.updatedAt);
+  // A submission is the Work's ask to its requester: its ID finds the Work too.
   assert.equal(
-    f.as("requester").forms.close({
-      formID: root.formID,
-      expectedRevision: root.revision,
-      status: "resolved",
-      resolution: "The person said run it, in the session",
-    }).status,
-    "resolved",
+    work(f.as("outsider").work.get({ askID: sent.submission?.submissionID ?? "" })).ticketID,
+    ticket.ticketID,
+  );
+  assert.throws(
+    () => f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }),
+    rejects("conflict"),
+  );
+  // A 0.5 ask left open on submitted Work is still answered and closed, by a stand-in once its
+  // asker is closed.
+  const at = new Date().toISOString();
+  const row = {
+    formID: "left",
+    requesterID: "respondent",
+    title: "Left open",
+    links: [],
+    workID: ticket.ticketID,
+    approval: false,
+    collect: true,
+    fields: [{ name: "x", label: "Still useful?", required: false }],
+    status: "open",
+    createdAt: at,
+    responses: {},
+  } as never;
+  f.store.transaction(() =>
+    f.store.forms.save("left", row, { actorID: "respondent", at, action: "created", detail: {} }),
+  );
+  ask(f.as("outsider").work.answer({ askID: "left", answers: { x: "Still useful" } }));
+  const respondent = f.rows.get("respondent");
+  assert.ok(respondent);
+  f.rows.set("respondent", { ...respondent, state: "closed" });
+  assert.throws(() => f.as("requester").work.update(close("left")), rejects("forbidden"));
+  assert.equal(ask(f.as("owner").work.update(close("left"))).status, "resolved");
+});
+
+test("cancelling Work cancels its open asks with the reason", (t) => {
+  const f = fixture(t);
+  const ticket = f.as("requester").work.create({ title: "Maybe", ownerID: "owner" });
+  const asked = ask(
+    f.as("owner").work.update({
+      ticketID: ticket.ticketID,
+      ask: { title: "Go?", fields: [{ name: "x", label: "Go?", required: true }] },
+    }),
+  );
+  const cancelled = work(
+    f
+      .as("requester")
+      .work.update({ ticketID: ticket.ticketID, expectedRevision: 1, status: "cancelled" }),
+  );
+  const [after] = work(f.as("owner").work.get({ askID: asked.formID })).asks ?? [];
+  assert.deepEqual(after?.resolution, {
+    text: "Cancelled with the Work's cancellation.",
+    reason: "cancelled",
+    at: cancelled.updatedAt,
+  });
+  assert.throws(
+    () => f.as("owner").work.answer({ askID: asked.formID, answers: { x: "Late" } }),
+    rejects("conflict"),
   );
 });
 
@@ -1028,18 +1235,23 @@ test("an Actor's own Work: defaults to itself, edits without revisions and compl
   assert.equal(Object.hasOwn(ticket, "goal"), false);
   const blocker = agent.work.create({ title: "Wait for CI", goal: "Three checks pass" });
   const link = { label: "PR", url: "https://example.test/pull/1" };
-  const waiting = agent.work.update({
-    ticketID: ticket.ticketID,
-    title: "Cut the 0.5 release",
-    progress: "Tagged.\n\n1. Pack\n2. Pin",
-    status: "active",
-    links: [link],
-    waitsOn: { ticketID: blocker.ticketID },
-  });
+  const waiting = work(
+    agent.work.update({
+      ticketID: ticket.ticketID,
+      title: "Cut the 0.5 release",
+      progress: "Tagged.\n\n1. Pack\n2. Pin",
+      status: "active",
+      links: [link],
+      waitsOn: { ticketID: blocker.ticketID },
+    }),
+  );
   assert.equal(waiting.revision, 2);
   assert.deepEqual(waiting.waitsOn, { ticketID: blocker.ticketID });
   for (const waitsOn of [{ actorID: "requester" }, { text: "3 PRs in CI" }])
-    assert.deepEqual(agent.work.update({ ticketID: ticket.ticketID, waitsOn }).waitsOn, waitsOn);
+    assert.deepEqual(
+      work(agent.work.update({ ticketID: ticket.ticketID, waitsOn })).waitsOn,
+      waitsOn,
+    );
   assert.deepEqual(
     agent.work.list({ waitsOnActorID: "requester" }).items.map((row) => row.ticketID),
     [],
@@ -1097,7 +1309,7 @@ test("Work another Actor requested waits for review; accepting needs no comment"
     waitsOn: { actorID: "respondent" },
   });
   assert.deepEqual(manager.work.list({ waitsOnActorID: "respondent" }), {
-    items: [ticket],
+    items: [listed(ticket)],
     next: null,
     actors: {
       owner: { name: "Owner" },
@@ -1113,11 +1325,13 @@ test("Work another Actor requested waits for review; accepting needs no comment"
     () => manager.work.update({ ticketID: ticket.ticketID, title: "Not the owner's" }),
     rejects("forbidden"),
   );
-  const regoal = manager.work.update({
-    ticketID: ticket.ticketID,
-    expectedRevision: 1,
-    goal: "Ship it twice",
-  });
+  const regoal = work(
+    manager.work.update({
+      ticketID: ticket.ticketID,
+      expectedRevision: 1,
+      goal: "Ship it twice",
+    }),
+  );
   const first = report.work.submit({ ticketID: ticket.ticketID, result: "Shipped" });
   assert.equal(first.status, "submitted");
   assert.equal(first.completedAt, undefined);
@@ -1130,11 +1344,13 @@ test("Work another Actor requested waits for review; accepting needs no comment"
       }),
     rejects("invalid_input"),
   );
-  const changes = manager.work.answer({
-    askID: first.submission.submissionID,
-    answers: { verdict: "changes_requested" },
-    note: "Once more",
-  });
+  const changes = work(
+    manager.work.answer({
+      askID: first.submission.submissionID,
+      answers: { verdict: "changes_requested" },
+      note: "Once more",
+    }),
+  );
   assert.equal(changes.completedAt, undefined);
   const second = report.work.submit({
     ticketID: ticket.ticketID,
@@ -1158,10 +1374,12 @@ test("Work another Actor requested waits for review; accepting needs no comment"
       }),
     rejects("not_found"),
   );
-  const accepted = manager.work.answer({
-    askID: second.submission?.submissionID ?? "",
-    answers: { verdict: "accepted" },
-  });
+  const accepted = work(
+    manager.work.answer({
+      askID: second.submission?.submissionID ?? "",
+      answers: { verdict: "accepted" },
+    }),
+  );
   assert.equal(accepted.status, "accepted");
   assert.equal(accepted.goal, regoal.goal);
   assert.equal(accepted.completedAt, accepted.review?.at);
@@ -1187,7 +1405,7 @@ test("a stored blocked reads as active, and setting blocked is refused with the 
   );
   const owner = f.as("owner");
   assert.equal(owner.work.get({ ticketID: "held" }).status, "active");
-  assert.deepEqual(owner.work.get({ ticketID: "held" }).waitsOn, { text: "CI" });
+  assert.deepEqual(work(owner.work.get({ ticketID: "held" })).waitsOn, { text: "CI" });
   assert.deepEqual(
     owner.work.list({ status: ["active"] }).items.map((row) => [row.ticketID, row.status]),
     [["held", "active"]],
@@ -1238,11 +1456,13 @@ test("the requester cancels Work while it can move, and cancelled Work is frozen
       }),
     rejects("forbidden"),
   );
-  const cancelled = requester.work.update({
-    ticketID: ticket.ticketID,
-    expectedRevision: started.revision,
-    status: "cancelled",
-  });
+  const cancelled = work(
+    requester.work.update({
+      ticketID: ticket.ticketID,
+      expectedRevision: started.revision,
+      status: "cancelled",
+    }),
+  );
   assert.equal(cancelled.status, "cancelled");
   assert.equal(cancelled.completedAt, undefined);
   assert.deepEqual(
@@ -1271,11 +1491,13 @@ test("the requester cancels Work while it can move, and cancelled Work is frozen
   const cancelSent = (expectedRevision: number) =>
     requester.work.update({ ticketID: sent.ticketID, expectedRevision, status: "cancelled" });
   assert.throws(() => cancelSent(submitted.revision), rejects("conflict"));
-  const changes = requester.work.answer({
-    askID: submitted.submission?.submissionID ?? "",
-    answers: { verdict: "changes_requested" },
-    note: "Not needed after all",
-  });
+  const changes = work(
+    requester.work.answer({
+      askID: submitted.submission?.submissionID ?? "",
+      answers: { verdict: "changes_requested" },
+      note: "Not needed after all",
+    }),
+  );
   assert.throws(
     () =>
       f.as("outsider").work.update({
@@ -1288,10 +1510,12 @@ test("the requester cancels Work while it can move, and cancelled Work is frozen
   assert.equal(cancelSent(changes.revision).status, "cancelled");
   const done = requester.work.create({ title: "Done", ownerID: "owner" });
   const finished = owner.work.submit({ ticketID: done.ticketID, result: "Done" });
-  const accepted = requester.work.answer({
-    askID: finished.submission?.submissionID ?? "",
-    answers: { verdict: "accepted" },
-  });
+  const accepted = work(
+    requester.work.answer({
+      askID: finished.submission?.submissionID ?? "",
+      answers: { verdict: "accepted" },
+    }),
+  );
   assert.throws(
     () =>
       requester.work.update({
@@ -1336,14 +1560,16 @@ test("a closed requester's rights pass to its nearest open manager, past closed 
     assert.throws(() => f.as(id).work.answer(verdict), rejects("forbidden"));
   const goal = { ticketID: open.ticketID, expectedRevision: 1, goal: "Rescued" };
   assert.throws(() => f.as("requester").work.update(goal), rejects("forbidden"));
-  assert.equal(f.as("owner").work.update(goal).goal, "Rescued");
+  assert.equal(work(f.as("owner").work.update(goal)).goal, "Rescued");
   close("owner");
   assert.equal(f.as("requester").work.answer(verdict).status, "accepted");
-  const moved = f.as("requester").work.update({
-    ticketID: open.ticketID,
-    expectedRevision: 2,
-    ownerID: "requester",
-  });
+  const moved = work(
+    f.as("requester").work.update({
+      ticketID: open.ticketID,
+      expectedRevision: 2,
+      ownerID: "requester",
+    }),
+  );
   assert.equal(moved.ownerID, "requester");
   assert.equal(
     f.as("requester").work.update({
@@ -1401,12 +1627,14 @@ test("a submission is answered by its ID with a verdict, and its note is the com
       requester.work.answer({ askID, ticketID: other.ticketID, answers: { verdict: "accepted" } }),
     rejects("not_found"),
   );
-  const changes = requester.work.answer({
-    askID,
-    ticketID: ticket.ticketID,
-    answers: { verdict: "changes_requested" },
-    note: "Add the evidence",
-  });
+  const changes = work(
+    requester.work.answer({
+      askID,
+      ticketID: ticket.ticketID,
+      answers: { verdict: "changes_requested" },
+      note: "Add the evidence",
+    }),
+  );
   assert.deepEqual(
     [
       changes.status,
@@ -1429,7 +1657,7 @@ test("canonical visibility, active callers and retained reads after counterparty
   const owner = f.rows.get("owner");
   assert.ok(owner);
   f.rows.set("owner", { ...owner, state: "closed" });
-  assert.equal(f.as("requester").work.get({ ticketID: ticket.ticketID }).ownerID, "owner");
+  assert.equal(work(f.as("requester").work.get({ ticketID: ticket.ticketID })).ownerID, "owner");
   assert.equal(f.as("requester").messages.get({ messageID: message.messageID }).text, "Retain me");
   assert.equal(f.as("requester").actors.get({ actorID: "owner" }).state, "closed");
   assert.throws(() => f.as("owner").work.list(), rejects("forbidden"));
@@ -1438,7 +1666,10 @@ test("canonical visibility, active callers and retained reads after counterparty
     () => f.as("requester").messages.send({ recipientID: "owner", text: "Closed target" }),
     rejects("invalid_input"),
   );
-  assert.deepEqual(f.as("outsider").work.get({ ticketID: ticket.ticketID }), ticket);
+  assert.deepEqual(f.as("outsider").work.get({ ticketID: ticket.ticketID }), {
+    ...ticket,
+    asks: [],
+  });
   const contextMessage = f.as("outsider").messages.send({
     recipientID: "requester",
     text: `Shared Work context: ${ticket.ticketID}`,
@@ -1447,14 +1678,20 @@ test("canonical visibility, active callers and retained reads after counterparty
     f.as("respondent").messages.get({ messageID: contextMessage.messageID }).text,
     contextMessage.text,
   );
-  const form = f.as("requester").forms.create({
-    title: "Open question",
-    fields: [{ name: "x", label: "Open question", required: false }],
-  });
+  const asked = f.as("outsider").work.create({ title: "Outsider's" });
+  const form = ask(
+    f.as("outsider").work.update({
+      ticketID: asked.ticketID,
+      ask: {
+        title: "Open question",
+        fields: [{ name: "x", label: "Open question", required: false }],
+      },
+    }),
+  );
   for (const read of [
     () => f.as("owner").work.get({ ticketID: ticket.ticketID }),
-    () => f.as("owner").forms.get({ formID: form.formID }),
-    () => f.as("owner").forms.list({ requesterID: "requester" }),
+    () => f.as("owner").work.get({ askID: form.formID }),
+    () => f.as("owner").work.asks({ requesterID: "outsider" }),
   ])
     assert.throws(read, rejects("forbidden"));
   const restricted = bindWorkspace(
@@ -1468,14 +1705,84 @@ test("canonical visibility, active callers and retained reads after counterparty
   );
   assert.throws(() => restricted.actors.get({ actorID: "respondent" }), rejects("not_found"));
   assert.deepEqual(restricted.work.list({ ownerID: "owner", requesterID: "requester" }).items, [
-    ticket,
+    { ...ticket, asks: [] },
   ]);
-  assert.deepEqual(restricted.forms.list({ requesterID: "requester" }), {
+  assert.deepEqual(restricted.work.asks({ requesterID: "outsider" }), {
     items: [form],
     next: null,
-    actors: { requester: { name: "Requester" } },
+    actors: {},
   });
-  assert.deepEqual(restricted.forms.list({ requesterID: "unknown" }).items, []);
+  assert.deepEqual(restricted.work.asks({ requesterID: "unknown" }).items, []);
+  // Routing walks past Actors the caller can't see, as names() leaves them out: respondent's ask
+  // routes through owner, which this authority hides, to the root.
+  const deeper = f.as("respondent").work.create({ title: "Respondent's" });
+  const routed = ask(
+    f.as("respondent").work.update({
+      ticketID: deeper.ticketID,
+      ask: { title: "Deeper", fields: [{ name: "x", label: "Deeper", required: false }] },
+    }),
+  );
+  assert.deepEqual(
+    restricted.work.asks({ routedTo: "requester" }).items.map((row) => row.formID),
+    [form.formID, routed.formID],
+  );
+});
+
+test("rights never pass past an Actor the caller can't see; only the routed read walks past it", (t) => {
+  const f = fixture(t);
+  // outsider and owner report to the root, requester; respondent to owner; deep to respondent.
+  const template = f.rows.get("respondent");
+  assert.ok(template);
+  f.rows.set("deep", { ...template, actorID: "deep", name: "Deep" });
+  f.managers.set("deep", "respondent");
+  const question = { title: "Go?", fields: [{ name: "x", label: "Go?", required: true }] };
+  const requested = f.as("outsider").work.create({ title: "Outsider's request", ownerID: "owner" });
+  const sent = work(f.as("owner").work.submit({ ticketID: requested.ticketID, result: "Done" }));
+  const open = f.as("outsider").work.create({ title: "Outsider's other", ownerID: "owner" });
+  const own = f.as("outsider").work.create({ title: "Outsider's own" });
+  const outsiderAsk = ask(f.as("outsider").work.update({ ticketID: own.ticketID, ask: question }));
+  const deepWork = f.as("deep").work.create({ title: "Deep's own" });
+  const deepAsk = ask(f.as("deep").work.update({ ticketID: deepWork.ticketID, ask: question }));
+  // A host that hides one open Actor from every caller.
+  const hiding = (hidden: string, caller: string) =>
+    bindWorkspace(
+      {
+        get: (_caller, id) => (id === hidden ? undefined : f.rows.get(id)),
+        within: f.authority.within,
+        manager: f.authority.manager,
+      },
+      f.store,
+      caller,
+    ).work;
+  const root = hiding("outsider", "requester");
+  for (const write of [
+    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, goal: "Taken over" }),
+    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, ownerID: "respondent" }),
+    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, status: "cancelled" }),
+    () =>
+      root.update({
+        close: { askID: outsiderAsk.formID, status: "cancelled", resolution: "Mine" },
+      }),
+    () =>
+      root.answer({
+        askID: sent.submission?.submissionID ?? "",
+        answers: { verdict: "accepted" },
+      }),
+  ])
+    assert.throws(write, rejects("not_found"));
+  const manager = hiding("respondent", "owner");
+  assert.throws(() => manager.answer({ askID: deepAsk.formID, raise: true }), rejects("not_found"));
+  // The routed read alone counts the hidden respondent as closed and walks on to owner.
+  assert.deepEqual(
+    manager.asks({ routedTo: "owner" }).items.map((row) => row.formID),
+    [deepAsk.formID],
+  );
+  // Nothing above was written.
+  const read = f.as("outsider").work;
+  assert.equal(read.get({ ticketID: open.ticketID }).revision, 1);
+  assert.equal(work(read.get({ ticketID: requested.ticketID })).status, "submitted");
+  assert.equal(work(read.get({ askID: outsiderAsk.formID })).asks?.[0]?.status, "open");
+  assert.deepEqual(work(read.get({ askID: deepAsk.formID })).asks?.[0]?.raises, []);
 });
 
 test("lists name their Actors, go newest first and select by update time and several requesters", (t) => {
@@ -1487,24 +1794,29 @@ test("lists name their Actors, go newest first and select by update time and sev
   assert.ok(first && second && third);
   assert.ok(first.updatedAt <= third.updatedAt);
   assert.equal(Object.hasOwn(first, "cursor"), false);
-  const moved = f.as("respondent").work.update({
-    ticketID: first.ticketID,
-    expectedRevision: 1,
-    status: "active",
-  });
+  const moved = work(
+    f.as("respondent").work.update({
+      ticketID: first.ticketID,
+      expectedRevision: 1,
+      status: "active",
+    }),
+  );
   assert.ok(moved.updatedAt >= first.updatedAt);
   const reader = f.as("outsider");
   const recent = reader.work.list({ order: "recent", limit: 2 });
-  assert.deepEqual(recent.items, [moved, third]);
+  assert.deepEqual(recent.items, [moved, third].map(listed));
   assert.deepEqual(reader.work.list({ order: "recent", after: next(recent) }), {
-    items: [second],
+    items: [listed(second)],
     next: null,
     actors: { outsider: { name: "Outsider" }, respondent: { name: "Respondent" } },
   });
-  assert.deepEqual(reader.work.list({ requesterID: ["requester", "owner"] }).items, [third, moved]);
-  assert.deepEqual(reader.work.list({ requesterID: "outsider" }).items, [second]);
+  assert.deepEqual(
+    reader.work.list({ requesterID: ["requester", "owner"] }).items,
+    [third, moved].map(listed),
+  );
+  assert.deepEqual(reader.work.list({ requesterID: "outsider" }).items, [listed(second)]);
   assert.deepEqual(reader.work.list({ status: ["open", "active"] }).items.length, 3);
-  assert.deepEqual(reader.work.list({ updatedSince: moved.updatedAt }).items.at(-1), moved);
+  assert.deepEqual(reader.work.list({ updatedSince: moved.updatedAt }).items.at(-1), listed(moved));
   assert.deepEqual(reader.work.list({ updatedSince: "2999-01-01T00:00:00.000Z" }).items, []);
   assert.throws(() => reader.work.list({ requesterID: [] }), rejects("invalid_input"));
   assert.throws(() => reader.work.list({ status: [] }), rejects("invalid_input"));
@@ -1516,16 +1828,22 @@ test("lists name their Actors, go newest first and select by update time and sev
     respondent: { name: "Respondent" },
   });
   f.rows.set("owner", hidden);
-  const form = f.as("requester").forms.create({
-    title: "Answer?",
-    fields: [{ name: "x", label: "Answer?", required: false }],
+  const form = ask(
+    f.as("respondent").work.update({
+      ticketID: first.ticketID,
+      ask: { title: "Answer?", fields: [{ name: "x", label: "Answer?", required: false }] },
+    }),
+  );
+  assert.deepEqual(reader.work.list({ requesterID: "requester" }).actors, {
+    requester: { name: "Requester" },
+    respondent: { name: "Respondent" },
   });
-  const answered = f.as("owner").forms.respond({ formID: form.formID, answers: {} });
+  const answered = ask(f.as("owner").work.answer({ askID: form.formID, answers: {} }));
   assert.ok(answered.updatedAt >= form.updatedAt);
-  assert.deepEqual(reader.forms.list({ order: "recent", requesterID: ["requester"] }), {
+  assert.deepEqual(reader.work.asks({ answeredBy: "owner" }), {
     items: [answered],
     next: null,
-    actors: { owner: { name: "Owner" }, requester: { name: "Requester" } },
+    actors: { owner: { name: "Owner" }, respondent: { name: "Respondent" } },
   });
 });
 
@@ -1534,7 +1852,6 @@ test("every contract carries the level that presents it", () => {
     Object.entries({
       ...MessageContracts,
       ...WorkContracts,
-      ...FormContracts,
     }).map(([name, spec]) => [name, spec.level]),
   );
   assert.deepEqual(levels, {
@@ -1547,10 +1864,5 @@ test("every contract carries the level that presents it", () => {
     work_update: "report",
     work_submit: "report",
     work_answer: "team",
-    form_create: "report",
-    form_get: "report",
-    form_list: "report",
-    form_respond: "team",
-    form_close: "report",
   });
 });

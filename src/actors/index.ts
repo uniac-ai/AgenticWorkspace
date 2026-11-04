@@ -1,5 +1,13 @@
 /** Canonical identity and membership; the module stores no Actors or credentials. */
-import { Actor, ActorQuery, ID, type Input, parse, requireThat } from "../contracts/index.js";
+import {
+  Actor,
+  ActorQuery,
+  ID,
+  type Input,
+  parse,
+  requireThat,
+  WorkspaceError,
+} from "../contracts/index.js";
 
 export interface ActorAuthority {
   /** Canonical visibility, including access to the admitted caller itself. */
@@ -47,12 +55,33 @@ export function activeActor(actors: ActorsClient, actorID: string): Actor {
   requireThat(actor.state === "active", "invalid_input", "target Actor is closed");
   return actor;
 }
-/** The Actor itself while it is open; once it is closed, its nearest open manager, or null. */
+/**
+ * The Actor itself while it is open; once it is closed, its nearest open manager, or null. This
+ * decides who holds rights, so an Actor the caller can't see is refused (`not_found`), never passed.
+ */
 export function standIn(actors: ActorsClient, actorID: string): string | null {
+  return walk(actors, actorID, (at) => actors.get({ actorID: at }).state === "active");
+}
+/**
+ * As standIn, for reads that route asks: an Actor the caller can't see counts as closed, so the walk
+ * goes on past it. Never for authority.
+ */
+export function routedStandIn(actors: ActorsClient, actorID: string): string | null {
+  return walk(actors, actorID, (at) => visible(actors, at)?.state === "active");
+}
+function walk(actors: ActorsClient, actorID: string, open: (actorID: string) => boolean) {
   const seen = new Set<string>();
   for (let at: string | null = actorID; at !== null && !seen.has(at); at = actors.manager(at)) {
-    if (actors.get({ actorID: at }).state === "active") return at;
+    if (open(at)) return at;
     seen.add(at);
   }
   return null;
+}
+function visible(actors: ActorsClient, actorID: string): Actor | undefined {
+  try {
+    return actors.get({ actorID });
+  } catch (error) {
+    if (error instanceof WorkspaceError && error.code === "not_found") return undefined;
+    throw error;
+  }
 }

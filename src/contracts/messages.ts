@@ -47,11 +47,15 @@ export const MessageContracts = {
       .refine(
         ({ between, counterpartyID, of }) =>
           [between, counterpartyID, of].filter((value) => value !== undefined).length === 1,
+        { error: "name exactly one of between, counterpartyID or of" },
       )
-      .refine(({ before, after }) => before === undefined || after === undefined)
+      .refine(({ before, after }) => before === undefined || after === undefined, {
+        error: "give before or after, not both",
+      })
       .refine(
         ({ of, before, after }) =>
           of === undefined || (before === undefined && typeof after !== "number"),
+        { error: "of continues only after a next position" },
       ),
     listOf(Message).extend({ older: Next.nullable() }),
   ),

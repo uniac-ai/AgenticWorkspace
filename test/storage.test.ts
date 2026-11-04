@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fixtureAuthority } from "../examples/authority.js";
+import type { Form, Work } from "../src/contracts/index.js";
 import { bindWorkspace } from "../src/index.js";
 import { openSqlite } from "../src/persistence/index.js";
 
@@ -116,6 +117,10 @@ function legacy(file: string) {
   );
   db.close();
 }
+function work(record: Work | Form): Work {
+  assert.ok("ticketID" in record);
+  return record;
+}
 function version(file: string) {
   const db = new DatabaseSync(file);
   try {
@@ -138,19 +143,22 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
       assert.equal(Object.hasOwn(message, "workID"), false);
       assert.equal(message.seq, 7);
       assert.equal(store.messages.history("message")[0]?.detail.workID, "ticket");
-      const pending = owner.work.get({ ticketID: "ticket" });
+      const pending = work(owner.work.get({ ticketID: "ticket" }));
       assert.equal(pending.updatedAt, at);
       assert.deepEqual(pending.links, []);
       assert.equal(pending.title, "Legacy goal");
       assert.equal(pending.goal, "Legacy goal");
       assert.equal(pending.completedAt, undefined);
-      const accepted = owner.work.get({ ticketID: "accepted" });
+      const accepted = work(owner.work.get({ ticketID: "accepted" }));
       assert.equal(accepted.completedAt, reviewedAt);
       assert.equal(accepted.title, `Ship ${Array(14).fill("release").join(" ")}…`);
       assert.equal(accepted.goal, longGoal);
       assert.equal(owner.work.get({ ticketID: "unbroken" }).title, `${"x".repeat(119)}…`);
-      const form = owner.forms.get({ formID: "form" });
+      // A 0.4 Form named no Work, so 0.6 reads it alone.
+      const form = owner.work.get({ askID: "form" });
+      assert.ok("formID" in form);
       assert.equal(Object.hasOwn(form, "respondentIDs"), false);
+      assert.deepEqual(form.raises, []);
       assert.equal(form.title, "Which?");
       assert.equal(form.fields[0]?.label, "Which?");
       assert.deepEqual(
@@ -169,7 +177,8 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
   const store = openSqlite(file);
   try {
     const outsider = bindWorkspace(fixtureAuthority().authority, store, "outsider");
-    const answered = outsider.forms.respond({ formID: "form", answers: { choice: "b" } });
+    const answered = outsider.work.answer({ askID: "form", answers: { choice: "b" } });
+    assert.ok("formID" in answered);
     assert.equal(answered.status, "open");
     assert.deepEqual(Object.keys(answered.responses), ["owner", "outsider"]);
   } finally {
@@ -356,6 +365,7 @@ test("indexed lookups select current snapshots by column values, through their i
         status: "open",
         createdAt: at,
         responses: {},
+        raises: [],
         ...extra,
       },
       event,
@@ -364,14 +374,14 @@ test("indexed lookups select current snapshots by column values, through their i
     for (let i = 0; i < 300; i++) work(`w${i}`, `o${i % 100}`, i % 3 === 0 ? "accepted" : "open");
     ask("plain", "owner", { workID: "w1" });
     // A raise is how 0.6 stores an ask passed up; its route starts at the raiser.
-    ask("raised", "respondent", { raises: [{ actorID: "owner", at }] } as never);
+    ask("raised", "respondent", { raises: [{ actorID: "owner", at }] });
     ask("closed", "outsider", { status: "resolved" });
-    ask("unraised", "outsider", { raises: [] } as never);
+    ask("unraised", "outsider", { raises: [] });
     const raises = [
       { actorID: "owner", at },
       { actorID: "requester", at },
     ];
-    ask("twice", "respondent", { raises } as never);
+    ask("twice", "respondent", { raises });
   });
   store.close();
   store = openSqlite(file);

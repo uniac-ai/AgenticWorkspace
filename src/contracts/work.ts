@@ -12,6 +12,7 @@ import {
   Text,
   Title,
 } from "./common.js";
+import { AskClose, AskInput, Form } from "./forms.js";
 
 /** A stored 0.5 `blocked` reads as `active`; `cancelled` is its requester's terminal state. */
 export const WorkStatus = z.enum([
@@ -67,7 +68,8 @@ export const WorkState = z.strictObject({
   submission: Submission.optional(),
   review: Review.optional(),
 });
-export const Work = WorkState.extend(Metadata);
+/** Asks come only with reads: all of them from work_get, the open ones from work_list. */
+export const Work = WorkState.extend(Metadata).extend({ asks: z.array(Form).optional() });
 export type WorkState = z.infer<typeof WorkState>;
 export type WaitsOn = z.infer<typeof WaitsOn>;
 export type Work = z.infer<typeof Work>;
@@ -101,21 +103,36 @@ export const WorkContracts = {
   ),
   work_get: contract(
     "report",
-    "Read shared organization work, including accepted work; history only when asked.",
-    ticketID.extend({ history: z.boolean().default(false) }),
-    Work,
+    "Read Work with all its asks, by ticketID, or by askID: the Work an ask (or the current submission) is on, or a 0.5 ask with no Work alone. History only when asked, for the Work and each ask.",
+    z
+      .strictObject({
+        ticketID: ID.optional(),
+        askID: ID.optional(),
+        history: z.boolean().default(false),
+      })
+      .refine(
+        (
+          v,
+        ): v is typeof v &
+          ({ ticketID: string; askID?: undefined } | { ticketID?: undefined; askID: string }) =>
+          (v.ticketID === undefined) !== (v.askID === undefined),
+        { error: "name exactly one of ticketID or askID" },
+      ),
+    z.union([Work, Form]),
   ),
   work_list: contract(
     "report",
-    "List shared work matching every filter, by update order or most recent first.",
+    "List shared work matching every filter, by update order or most recent first; each item carries its open asks.",
     filter.extend({ after: Next.optional(), limit: Limit }),
     listOf(Work),
   ),
   work_update: contract(
     "report",
-    "Owner edits title, progress, open/active status, links and waitsOn (null clears it); requester edits goal or owner, or cancels, with expectedRevision. Progress is a paragraph, then optionally a Markdown task list of steps: `- [x]` done, `- [ ]` not done.",
-    mutation
-      .extend({
+    "One of three forms, each in a call of its own. Edits: the owner edits title, progress, open/active status, links and waitsOn (null clears it); the requester edits goal or owner, or cancels, with expectedRevision. Progress is a paragraph, then optionally a Markdown task list of steps: `- [x]` done, `- [ ]` not done. {ticketID, ask}: the owner asks on its Work and gets the ask back; mark approval when the answer can't be undone. {close}: the asker resolves or cancels its open ask, recording why.",
+    z
+      .strictObject({
+        ticketID: ID.optional(),
+        expectedRevision: Revision.optional(),
         title: Title.optional(),
         goal: Text.optional(),
         ownerID: ID.optional(),
@@ -127,11 +144,24 @@ export const WorkContracts = {
           .optional(),
         links: Links.optional(),
         waitsOn: WaitsOn.nullable().optional(),
+        ask: AskInput.optional(),
+        close: AskClose.optional(),
       })
-      .refine(({ ticketID: _ticketID, expectedRevision: _revision, ...edits }) =>
-        Object.values(edits).some((value) => value !== undefined),
+      .refine(
+        ({ ticketID, expectedRevision, ask, close, ...edits }) => {
+          const edited = Object.values(edits).some((value) => value !== undefined);
+          if (close !== undefined)
+            return !edited && !ask && ticketID === undefined && expectedRevision === undefined;
+          if (ask !== undefined)
+            return !edited && ticketID !== undefined && expectedRevision === undefined;
+          return edited && ticketID !== undefined;
+        },
+        {
+          error:
+            "use one form per call: edits with ticketID; {ticketID, ask} and nothing else; or {close} and nothing else",
+        },
       ),
-    Work,
+    z.union([Work, Form]),
     true,
   ),
   work_submit: contract(
@@ -143,7 +173,7 @@ export const WorkContracts = {
   ),
   work_answer: contract(
     "team",
-    "Answer the current submission, by its ID: answers {verdict: accepted or changes_requested}, and note as the comment, which requesting changes needs. Only its requester answers, or its nearest open manager once it is closed.",
+    "Answer an ask by its askID: answers for its fields and an optional note. Any Actor answers; only the asker's managers answer an approval; the first answer resolves the ask unless it collects. raise: true, by the Actor the ask is routed to, passes it one manager up. Or answer the Work's current submission by its ID: answers {verdict: accepted or changes_requested}, the note as the comment, which requesting changes needs; only its requester answers, or its nearest open manager once it is closed.",
     z
       .strictObject({
         askID: ID,
@@ -152,10 +182,12 @@ export const WorkContracts = {
         note: Text.optional(),
         raise: z.literal(true).optional(),
       })
-      .refine((v) =>
-        v.raise ? v.answers === undefined && v.note === undefined : v.answers !== undefined,
+      .refine(
+        (v) =>
+          v.raise ? v.answers === undefined && v.note === undefined : v.answers !== undefined,
+        { error: "give answers, or raise: true with no answers or note" },
       ),
-    Work,
+    z.union([Work, Form]),
     true,
   ),
 };
