@@ -185,7 +185,7 @@ export function createWork(
       return store.transaction(() => {
         const row = submitted(table, request.askID, request.ticketID);
         requireThat(!request.raise, "invalid_input", "a submission can't be raised");
-        const { verdict } = parse(SubmissionAnswer, request.answers);
+        const { verdict } = parse(SubmissionAnswer, request).answers;
         requireThat(
           verdict === "accepted" || request.note !== undefined,
           "invalid_input",

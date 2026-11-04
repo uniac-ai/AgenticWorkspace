@@ -1377,6 +1377,11 @@ test("a submission is answered by its ID with a verdict, and its note is the com
   const requester = f.as("requester");
   for (const answers of [{}, { verdict: "maybe" }, { verdict: "accepted", extra: "x" }])
     assert.throws(() => requester.work.answer({ askID, answers }), rejects("invalid_input"));
+  assert.throws(
+    () => requester.work.answer({ askID, answers: { verdict: "maybe" } }),
+    (error: unknown) =>
+      error instanceof WorkspaceError && /^answers\.verdict: /.test(error.message),
+  );
   for (const input of [
     { askID },
     { askID, raise: true as const, answers: { verdict: "accepted" } },

@@ -39,8 +39,13 @@ export const Review = z.strictObject({
   comment: Text.optional(),
   at: z.iso.datetime(),
 });
-/** The answer to a submission, the Work's ask to its requester; the answer's note is the comment. */
-export const SubmissionAnswer = z.strictObject({ verdict: Review.shape.verdict });
+/**
+ * work_answer's answers to a submission, the Work's ask to its requester, rooted at the input so a
+ * refusal names `answers.verdict`; the answer's note is the comment.
+ */
+export const SubmissionAnswer = z.object({
+  answers: z.strictObject({ verdict: Review.shape.verdict }),
+});
 /** What the Work waits on outside itself: an Actor, other Work, or a short description. */
 export const WaitsOn = z.union([
   z.strictObject({ actorID: ID }),
