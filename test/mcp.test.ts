@@ -22,7 +22,7 @@ const executionNames = [
   "work_list",
   "work_update",
   "work_submit",
-  "work_review",
+  "work_answer",
   "form_create",
   "form_get",
   "form_list",
@@ -167,12 +167,16 @@ test("SDK execution/viewer discovery and all 14 calls share records and enforce 
     evidence: ["https://example.test/evidence"],
   });
   assert.ok(submitted.submission);
-  await call(requester, "work_review", {
-    ticketID: ticket.ticketID,
-    expectedRevision: submitted.revision,
-    submissionID: submitted.submission.submissionID,
-    verdict: "accepted",
-    comment: "Reviewed over MCP",
+  await refused(
+    requester,
+    "work_answer",
+    { askID: submitted.submission.submissionID, raise: true },
+    "invalid_input",
+  );
+  await call(requester, "work_answer", {
+    askID: submitted.submission.submissionID,
+    answers: { verdict: "accepted" },
+    note: "Reviewed over MCP",
   });
   assert.equal(
     (await call<Work>(viewer, "work_get", { ticketID: ticket.ticketID })).status,
@@ -219,15 +223,18 @@ test("SDK execution/viewer discovery and all 14 calls share records and enforce 
   assert.deepEqual(await call(outsider, "message_get", { messageID: message.messageID }), message);
   await refused(
     requester,
-    "work_review",
-    {
-      ticketID: ticket.ticketID,
-      expectedRevision: 1,
-      verdict: "accepted",
-      comment: "Missing submission",
-    },
+    "work_answer",
+    { ticketID: ticket.ticketID, answers: { verdict: "accepted" } },
     "invalid_input",
   );
+  const blocked = await owner.callTool({
+    name: "work_update",
+    arguments: { ticketID: ticket.ticketID, status: "blocked" },
+  });
+  const blockedText = (blocked.content as { type: string; text: string }[])[0]?.text ?? "";
+  assert.equal(JSON.parse(blockedText).code, "invalid_input");
+  assert.match(JSON.parse(blockedText).message, /^status: blocked is gone: ask on the Work/);
+  await refused(requester, "work_review", {}, "not_found");
   await refused(
     owner,
     "message_send",

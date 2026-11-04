@@ -289,10 +289,10 @@ test("a 0.5 database upgrades to version 4 by indexing fields, rewriting no reco
     );
     assert.deepEqual(store.forms.values("route", { work: ["held"] }), ["owner"]);
     const owner = bindWorkspace(fixtureAuthority().authority, store, "owner").work;
-    const listed = (status: ("active" | "blocked")[]) =>
-      owner.list({ status }).items.map((row) => row.ticketID);
-    assert.deepEqual(listed(["blocked"]), ["held"]);
-    assert.deepEqual(listed(["active"]), []);
+    assert.deepEqual(
+      owner.list({ status: ["active"] }).items.map((row) => [row.ticketID, row.status]),
+      [["held", "active"]],
+    );
   } finally {
     store.close();
   }

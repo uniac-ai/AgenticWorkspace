@@ -18,6 +18,8 @@ import { createWork } from "../src/work/index.js";
 
 const rejects = (code: WorkspaceError["code"]) => (error: unknown) =>
   error instanceof WorkspaceError && error.code === code;
+const habit =
+  "blocked is gone: ask on the Work with work_update {ticketID, ask}, or keep it active and say what it waits on with waitsOn";
 function next(page: { next: string | null }): string {
   assert.ok(page.next);
   return page.next;
@@ -200,21 +202,19 @@ for (const requesterClient of ["human", "software"] as const)
       );
       assert.throws(
         () =>
-          owner.work.review({
+          owner.work.answer({
+            askID: firstSubmissionID,
             ticketID: ticket.ticketID,
-            expectedRevision: first.revision,
-            submissionID: firstSubmissionID,
-            verdict: "accepted",
-            comment: "Owner cannot accept",
+            answers: { verdict: "accepted" },
+            note: "Owner cannot accept",
           }),
         rejects("forbidden"),
       );
-      const changes = requester.work.review({
+      const changes = requester.work.answer({
+        askID: firstSubmissionID,
         ticketID: ticket.ticketID,
-        expectedRevision: first.revision,
-        submissionID: firstSubmissionID,
-        verdict: "changes_requested",
-        comment: "Add second evidence",
+        answers: { verdict: "changes_requested" },
+        note: "Add second evidence",
       });
       const second = owner.work.submit({
         ticketID: ticket.ticketID,
@@ -226,32 +226,19 @@ for (const requesterClient of ["human", "software"] as const)
       const secondSubmissionID = second.submission.submissionID;
       assert.throws(
         () =>
-          requester.work.review({
+          requester.work.answer({
+            askID: firstSubmissionID,
             ticketID: ticket.ticketID,
-            expectedRevision: second.revision,
-            submissionID: firstSubmissionID,
-            verdict: "accepted",
-            comment: "Delayed old review",
+            answers: { verdict: "accepted" },
+            note: "Delayed old review",
           }),
         rejects("conflict"),
       );
-      assert.throws(
-        () =>
-          requester.work.review({
-            ticketID: ticket.ticketID,
-            expectedRevision: first.revision,
-            submissionID: secondSubmissionID,
-            verdict: "accepted",
-            comment: "Stale revision",
-          }),
-        rejects("conflict"),
-      );
-      const accepted = requester.work.review({
+      const accepted = requester.work.answer({
+        askID: secondSubmissionID,
         ticketID: ticket.ticketID,
-        expectedRevision: second.revision,
-        submissionID: secondSubmissionID,
-        verdict: "accepted",
-        comment: "Evidence checked",
+        answers: { verdict: "accepted" },
+        note: "Evidence checked",
       });
       assert.equal(accepted.review?.reviewerID, "requester");
       assert.equal(accepted.status, "accepted");
@@ -369,14 +356,13 @@ test("shared standalone and linked Form reads never consult Work; linked creatio
   );
   assert.throws(
     () =>
-      outsider.work.review({
+      outsider.work.answer({
+        askID: "absent",
         ticketID: ticket.ticketID,
-        expectedRevision: 1,
-        submissionID: "absent",
-        verdict: "accepted",
-        comment: "Unrelated review",
+        answers: { verdict: "accepted" },
+        note: "Unrelated review",
       }),
-    rejects("forbidden"),
+    rejects("not_found"),
   );
   assert.equal(owner.forms.get({ formID: linked.formID }).workID, ticket.ticketID);
   requester.work.update({ ticketID: ticket.ticketID, expectedRevision: 1, ownerID: "outsider" });
@@ -743,12 +729,11 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     evidence: [],
   });
   assert.ok(submitted.submission);
-  const accepted = requester.work.review({
+  const accepted = requester.work.answer({
+    askID: submitted.submission.submissionID,
     ticketID: ticket.ticketID,
-    expectedRevision: submitted.revision,
-    submissionID: submitted.submission.submissionID,
-    verdict: "accepted",
-    comment: "Reviewed",
+    answers: { verdict: "accepted" },
+    note: "Reviewed",
   });
   const query = {
     ownerID: "respondent",
@@ -1139,18 +1124,16 @@ test("Work another Actor requested waits for review; accepting needs no comment"
   assert.ok(first.submission);
   assert.throws(
     () =>
-      manager.work.review({
-        ticketID: ticket.ticketID,
-        submissionID: first.submission?.submissionID ?? "",
-        verdict: "changes_requested",
+      manager.work.answer({
+        askID: first.submission?.submissionID ?? "",
+        answers: { verdict: "changes_requested" },
       }),
     rejects("invalid_input"),
   );
-  const changes = manager.work.review({
-    ticketID: ticket.ticketID,
-    submissionID: first.submission.submissionID,
-    verdict: "changes_requested",
-    comment: "Once more",
+  const changes = manager.work.answer({
+    askID: first.submission.submissionID,
+    answers: { verdict: "changes_requested" },
+    note: "Once more",
   });
   assert.equal(changes.completedAt, undefined);
   const second = report.work.submit({
@@ -1160,23 +1143,283 @@ test("Work another Actor requested waits for review; accepting needs no comment"
   });
   assert.throws(
     () =>
-      manager.work.review({
+      manager.work.answer({
+        askID: first.submission?.submissionID ?? "",
         ticketID: ticket.ticketID,
-        submissionID: first.submission?.submissionID ?? "",
-        verdict: "accepted",
+        answers: { verdict: "accepted" },
       }),
     rejects("conflict"),
   );
-  const accepted = manager.work.review({
-    ticketID: ticket.ticketID,
-    submissionID: second.submission?.submissionID ?? "",
-    verdict: "accepted",
+  assert.throws(
+    () =>
+      manager.work.answer({
+        askID: first.submission?.submissionID ?? "",
+        answers: { verdict: "accepted" },
+      }),
+    rejects("not_found"),
+  );
+  const accepted = manager.work.answer({
+    askID: second.submission?.submissionID ?? "",
+    answers: { verdict: "accepted" },
   });
   assert.equal(accepted.status, "accepted");
   assert.equal(accepted.goal, regoal.goal);
   assert.equal(accepted.completedAt, accepted.review?.at);
   assert.equal(Object.hasOwn(accepted.review ?? {}, "comment"), false);
   assert.equal(accepted.review?.reviewerID, "requester");
+});
+
+test("a stored blocked reads as active, and setting blocked is refused with the habit", (t) => {
+  const f = fixture(t);
+  const at = new Date().toISOString();
+  const held = {
+    ticketID: "held",
+    requesterID: "requester",
+    ownerID: "owner",
+    title: "Held up",
+    status: "blocked",
+    links: [],
+    waitsOn: { text: "CI" },
+    createdAt: at,
+  } as never;
+  f.store.transaction(() =>
+    f.store.work.save("held", held, { actorID: "owner", at, action: "updated", detail: held }),
+  );
+  const owner = f.as("owner");
+  assert.equal(owner.work.get({ ticketID: "held" }).status, "active");
+  assert.deepEqual(owner.work.get({ ticketID: "held" }).waitsOn, { text: "CI" });
+  assert.deepEqual(
+    owner.work.list({ status: ["active"] }).items.map((row) => [row.ticketID, row.status]),
+    [["held", "active"]],
+  );
+  assert.throws(() => owner.work.list({ status: ["blocked" as never] }), rejects("invalid_input"));
+  assert.throws(
+    () => owner.work.update({ ticketID: "held", status: "blocked" as never }),
+    (error: unknown) =>
+      error instanceof WorkspaceError &&
+      error.code === "invalid_input" &&
+      error.message === `status: ${habit}`,
+  );
+  // A host that validates with the contract itself, as the Hub does, gets the same words.
+  const issues = WorkContracts.work_update.input.safeParse({ ticketID: "held", status: "blocked" })
+    .error?.issues;
+  assert.deepEqual(
+    issues?.map((issue) => issue.message),
+    [habit],
+  );
+  const edited = owner.work.update({ ticketID: "held", progress: "Still on CI" });
+  assert.equal(edited.status, "active");
+  assert.equal(f.store.work.get("held")?.status, "active");
+  assert.deepEqual(owner.work.get({ ticketID: "held", history: true }).history?.at(-1)?.detail, {
+    progress: "Still on CI",
+    status: "active",
+  });
+  assert.equal(owner.work.submit({ ticketID: "held", result: "Green" }).status, "submitted");
+  const history = owner.work.get({ ticketID: "held", history: true }).history ?? [];
+  assert.equal(history[0]?.detail.status, "blocked");
+});
+
+test("the requester cancels Work while it can move, and cancelled Work is frozen", (t) => {
+  const f = fixture(t);
+  const requester = f.as("requester");
+  const owner = f.as("owner");
+  const ticket = requester.work.create({ title: "Maybe later", ownerID: "owner" });
+  const started = owner.work.update({ ticketID: ticket.ticketID, status: "active" });
+  assert.throws(
+    () => requester.work.update({ ticketID: ticket.ticketID, status: "cancelled" }),
+    rejects("invalid_input"),
+  );
+  assert.throws(
+    () =>
+      owner.work.update({
+        ticketID: ticket.ticketID,
+        expectedRevision: started.revision,
+        status: "cancelled",
+      }),
+    rejects("forbidden"),
+  );
+  const cancelled = requester.work.update({
+    ticketID: ticket.ticketID,
+    expectedRevision: started.revision,
+    status: "cancelled",
+  });
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.completedAt, undefined);
+  assert.deepEqual(
+    requester.work.get({ ticketID: ticket.ticketID, history: true }).history?.at(-1)?.detail,
+    { status: "cancelled" },
+  );
+  for (const write of [
+    () => owner.work.update({ ticketID: ticket.ticketID, progress: "Late" }),
+    () => owner.work.submit({ ticketID: ticket.ticketID, result: "Late" }),
+    () =>
+      requester.work.update({
+        ticketID: ticket.ticketID,
+        expectedRevision: cancelled.revision,
+        goal: "Revived",
+      }),
+    () =>
+      requester.work.update({
+        ticketID: ticket.ticketID,
+        expectedRevision: cancelled.revision,
+        status: "cancelled",
+      }),
+  ])
+    assert.throws(write, rejects("conflict"));
+  const sent = requester.work.create({ title: "In review", ownerID: "owner" });
+  const submitted = owner.work.submit({ ticketID: sent.ticketID, result: "Done" });
+  const cancelSent = (expectedRevision: number) =>
+    requester.work.update({ ticketID: sent.ticketID, expectedRevision, status: "cancelled" });
+  assert.throws(() => cancelSent(submitted.revision), rejects("conflict"));
+  const changes = requester.work.answer({
+    askID: submitted.submission?.submissionID ?? "",
+    answers: { verdict: "changes_requested" },
+    note: "Not needed after all",
+  });
+  assert.throws(
+    () =>
+      f.as("outsider").work.update({
+        ticketID: sent.ticketID,
+        expectedRevision: changes.revision,
+        status: "cancelled",
+      }),
+    rejects("forbidden"),
+  );
+  assert.equal(cancelSent(changes.revision).status, "cancelled");
+  const done = requester.work.create({ title: "Done", ownerID: "owner" });
+  const finished = owner.work.submit({ ticketID: done.ticketID, result: "Done" });
+  const accepted = requester.work.answer({
+    askID: finished.submission?.submissionID ?? "",
+    answers: { verdict: "accepted" },
+  });
+  assert.throws(
+    () =>
+      requester.work.update({
+        ticketID: done.ticketID,
+        expectedRevision: accepted.revision,
+        status: "cancelled",
+      }),
+    rejects("conflict"),
+  );
+  const own = owner.work.create({ title: "Own idea" });
+  assert.equal(
+    owner.work.update({ ticketID: own.ticketID, expectedRevision: 1, status: "cancelled" }).status,
+    "cancelled",
+  );
+  assert.deepEqual(
+    requester.work.list({ status: ["cancelled"] }).items.map((row) => row.ticketID),
+    [ticket.ticketID, sent.ticketID, own.ticketID],
+  );
+});
+
+test("a closed requester's rights pass to its nearest open manager, past closed ones", (t) => {
+  const f = fixture(t);
+  // respondent reports to owner, who reports to the root, requester.
+  const asked = f.as("respondent").work.create({ title: "Submitted", ownerID: "outsider" });
+  const open = f.as("respondent").work.create({ title: "Not started", ownerID: "outsider" });
+  const sent = f.as("outsider").work.submit({ ticketID: asked.ticketID, result: "Done" });
+  const close = (id: string) => {
+    const row = f.rows.get(id);
+    assert.ok(row);
+    f.rows.set(id, { ...row, state: "closed" });
+  };
+  // While the requester is open, its rights stay its own.
+  assert.throws(
+    () =>
+      f.as("owner").work.update({ ticketID: open.ticketID, expectedRevision: 1, goal: "Early" }),
+    rejects("forbidden"),
+  );
+  close("respondent");
+  const submissionID = sent.submission?.submissionID ?? "";
+  const verdict = { askID: submissionID, answers: { verdict: "accepted" } };
+  for (const id of ["requester", "outsider"])
+    assert.throws(() => f.as(id).work.answer(verdict), rejects("forbidden"));
+  const goal = { ticketID: open.ticketID, expectedRevision: 1, goal: "Rescued" };
+  assert.throws(() => f.as("requester").work.update(goal), rejects("forbidden"));
+  assert.equal(f.as("owner").work.update(goal).goal, "Rescued");
+  close("owner");
+  assert.equal(f.as("requester").work.answer(verdict).status, "accepted");
+  const moved = f.as("requester").work.update({
+    ticketID: open.ticketID,
+    expectedRevision: 2,
+    ownerID: "requester",
+  });
+  assert.equal(moved.ownerID, "requester");
+  assert.equal(
+    f.as("requester").work.update({
+      ticketID: open.ticketID,
+      expectedRevision: moved.revision,
+      status: "cancelled",
+    }).status,
+    "cancelled",
+  );
+  // A manager chain that loops through closed Actors leaves no one the requester's rights.
+  const stranded = f.as("outsider").work.create({ title: "Looped", ownerID: "requester" });
+  f.managers.set("outsider", "respondent");
+  f.managers.set("owner", "respondent");
+  close("outsider");
+  assert.throws(
+    () =>
+      f.as("requester").work.update({
+        ticketID: stranded.ticketID,
+        expectedRevision: 1,
+        goal: "Looped",
+      }),
+    rejects("forbidden"),
+  );
+});
+
+test("a submission is answered by its ID with a verdict, and its note is the comment", (t) => {
+  const f = fixture(t);
+  const ticket = f.as("requester").work.create({ title: "Review me", ownerID: "owner" });
+  const sent = f.as("owner").work.submit({ ticketID: ticket.ticketID, result: "Done" });
+  const askID = sent.submission?.submissionID ?? "";
+  const requester = f.as("requester");
+  for (const answers of [{}, { verdict: "maybe" }, { verdict: "accepted", extra: "x" }])
+    assert.throws(() => requester.work.answer({ askID, answers }), rejects("invalid_input"));
+  assert.throws(
+    () => requester.work.answer({ askID, answers: { verdict: "maybe" } }),
+    (error: unknown) =>
+      error instanceof WorkspaceError && /^answers\.verdict: /.test(error.message),
+  );
+  for (const input of [
+    { askID },
+    { askID, raise: true as const, answers: { verdict: "accepted" } },
+  ])
+    assert.throws(() => requester.work.answer(input), rejects("invalid_input"));
+  assert.throws(
+    () => requester.work.answer({ askID, raise: true }),
+    (error: unknown) => error instanceof WorkspaceError && /can't be raised/.test(error.message),
+  );
+  assert.throws(
+    () => requester.work.answer({ askID: "absent", answers: { verdict: "accepted" } }),
+    rejects("not_found"),
+  );
+  const other = requester.work.create({ title: "Other", ownerID: "owner" });
+  assert.throws(
+    () =>
+      requester.work.answer({ askID, ticketID: other.ticketID, answers: { verdict: "accepted" } }),
+    rejects("not_found"),
+  );
+  const changes = requester.work.answer({
+    askID,
+    ticketID: ticket.ticketID,
+    answers: { verdict: "changes_requested" },
+    note: "Add the evidence",
+  });
+  assert.deepEqual(
+    [
+      changes.status,
+      changes.review?.verdict,
+      changes.review?.comment,
+      changes.review?.submissionID,
+    ],
+    ["changes_requested", "changes_requested", "Add the evidence", askID],
+  );
+  assert.throws(
+    () => requester.work.answer({ askID, answers: { verdict: "accepted" } }),
+    rejects("conflict"),
+  );
 });
 
 test("canonical visibility, active callers and retained reads after counterparty closure", (t) => {
@@ -1218,6 +1461,7 @@ test("canonical visibility, active callers and retained reads after counterparty
     {
       get: (caller, id) => (caller === id ? f.rows.get(id) : undefined),
       within: f.authority.within,
+      manager: f.authority.manager,
     },
     f.store,
     "requester",
@@ -1302,7 +1546,7 @@ test("every contract carries the level that presents it", () => {
     work_list: "report",
     work_update: "report",
     work_submit: "report",
-    work_review: "team",
+    work_answer: "team",
     form_create: "report",
     form_get: "report",
     form_list: "report",

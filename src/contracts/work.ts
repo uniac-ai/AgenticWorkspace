@@ -13,14 +13,18 @@ import {
   Title,
 } from "./common.js";
 
+/** A stored 0.5 `blocked` reads as `active`; `cancelled` is its requester's terminal state. */
 export const WorkStatus = z.enum([
   "open",
   "active",
-  "blocked",
   "submitted",
   "changes_requested",
   "accepted",
+  "cancelled",
 ]);
+/** Why `blocked` is refused: Work that can't move asks, and Work held up elsewhere stays active. */
+const BLOCKED_GONE =
+  "blocked is gone: ask on the Work with work_update {ticketID, ask}, or keep it active and say what it waits on with waitsOn";
 export const Submission = z.strictObject({
   submissionID: ID,
   ownerID: ID,
@@ -34,6 +38,13 @@ export const Review = z.strictObject({
   verdict: z.enum(["accepted", "changes_requested"]),
   comment: Text.optional(),
   at: z.iso.datetime(),
+});
+/**
+ * work_answer's answers to a submission, the Work's ask to its requester, rooted at the input so a
+ * refusal names `answers.verdict`; the answer's note is the comment.
+ */
+export const SubmissionAnswer = z.object({
+  answers: z.strictObject({ verdict: Review.shape.verdict }),
 });
 /** What the Work waits on outside itself: an Actor, other Work, or a short description. */
 export const WaitsOn = z.union([
@@ -102,14 +113,18 @@ export const WorkContracts = {
   ),
   work_update: contract(
     "report",
-    "Owner edits title, progress, open/active/blocked status, links and waitsOn (null clears it); requester edits goal or owner with expectedRevision. Progress is a paragraph, then optionally a Markdown task list of steps: `- [x]` done, `- [ ]` not done.",
+    "Owner edits title, progress, open/active status, links and waitsOn (null clears it); requester edits goal or owner, or cancels, with expectedRevision. Progress is a paragraph, then optionally a Markdown task list of steps: `- [x]` done, `- [ ]` not done.",
     mutation
       .extend({
         title: Title.optional(),
         goal: Text.optional(),
         ownerID: ID.optional(),
         progress: Text.optional(),
-        status: z.enum(["open", "active", "blocked"]).optional(),
+        status: z
+          .enum(["open", "active", "cancelled"], {
+            error: (issue) => (issue.input === "blocked" ? BLOCKED_GONE : undefined),
+          })
+          .optional(),
         links: Links.optional(),
         waitsOn: WaitsOn.nullable().optional(),
       })
@@ -121,21 +136,25 @@ export const WorkContracts = {
   ),
   work_submit: contract(
     "report",
-    "Owner submits the result; Work the owner requested itself completes, other Work waits for review.",
+    "Owner submits the result; Work the owner requested itself completes, other Work waits for its requester's answer.",
     mutation.extend({ result: Text, evidence: z.array(Text).max(100).default([]) }),
     Work,
     true,
   ),
-  work_review: contract(
+  work_answer: contract(
     "team",
-    "Requester accepts or requests changes on the exact current submission; requesting changes needs a comment.",
-    mutation
-      .extend({
-        submissionID: ID,
-        verdict: z.enum(["accepted", "changes_requested"]),
-        comment: Text.optional(),
+    "Answer the current submission, by its ID: answers {verdict: accepted or changes_requested}, and note as the comment, which requesting changes needs. Only its requester answers, or its nearest open manager once it is closed.",
+    z
+      .strictObject({
+        askID: ID,
+        ticketID: ID.optional(),
+        answers: z.record(z.string(), z.string().max(20000)).optional(),
+        note: Text.optional(),
+        raise: z.literal(true).optional(),
       })
-      .refine((v) => v.verdict === "accepted" || v.comment !== undefined),
+      .refine((v) =>
+        v.raise ? v.answers === undefined && v.note === undefined : v.answers !== undefined,
+      ),
     Work,
     true,
   ),

@@ -47,10 +47,16 @@ export class WorkspaceError extends Error {
     super(message);
   }
 }
+/** Refuses input outside the schema, naming each issue as the Hub does. */
 export function parse<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
   const parsed = schema.safeParse(input);
   if (!parsed.success)
-    throw new WorkspaceError("invalid_input", "input does not match the operation schema");
+    throw new WorkspaceError(
+      "invalid_input",
+      parsed.error.issues
+        .map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`)
+        .join("; "),
+    );
   return parsed.data;
 }
 export function requireThat(

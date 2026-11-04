@@ -6,10 +6,13 @@ export interface ActorAuthority {
   get(callerID: string, actorID: string): Actor | undefined;
   /** Inclusive retained ancestry, including closed members/anchors; unknown IDs return false. */
   within(callerID: string, actorID: string, ancestorID: string): boolean;
+  /** The retained manager, closed or not; null for the root and for unknown IDs. */
+  manager(callerID: string, actorID: string): string | null;
 }
 export interface ActorsClient {
   get(input?: Input<typeof ActorQuery>): Actor;
   within(actorID: string, ancestorID: string): boolean;
+  manager(actorID: string): string | null;
 }
 export function createActors(authority: ActorAuthority, callerID: string): ActorsClient {
   function caller(): Actor {
@@ -32,10 +35,24 @@ export function createActors(authority: ActorAuthority, callerID: string): Actor
       caller();
       return authority.within(callerID, member, ancestor);
     },
+    manager(actorID) {
+      const member = parse(ID, actorID);
+      caller();
+      return authority.manager(callerID, member);
+    },
   };
 }
 export function activeActor(actors: ActorsClient, actorID: string): Actor {
   const actor = actors.get({ actorID });
   requireThat(actor.state === "active", "invalid_input", "target Actor is closed");
   return actor;
+}
+/** The Actor itself while it is open; once it is closed, its nearest open manager, or null. */
+export function standIn(actors: ActorsClient, actorID: string): string | null {
+  const seen = new Set<string>();
+  for (let at: string | null = actorID; at !== null && !seen.has(at); at = actors.manager(at)) {
+    if (actors.get({ actorID: at }).state === "active") return at;
+    seen.add(at);
+  }
+  return null;
 }
