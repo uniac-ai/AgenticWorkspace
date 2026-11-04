@@ -8,14 +8,12 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { fixtureAuthority } from "../examples/authority.js";
-import type { Actor, Form, List, Message, Page, Work } from "../src/contracts/index.js";
+import type { Form, List, Message, Work } from "../src/contracts/index.js";
 import { bindWorkspace } from "../src/index.js";
 import { createMcpServer, type McpPurpose } from "../src/mcp/index.js";
 import { openSqlite } from "../src/persistence/index.js";
 
 const executionNames = [
-  "actor_get",
-  "actor_list",
   "message_send",
   "message_get",
   "message_list",
@@ -30,19 +28,14 @@ const executionNames = [
   "form_list",
   "form_respond",
   "form_close",
-  "status_set",
-  "status_get",
 ];
 const viewerNames = [
-  "actor_get",
-  "actor_list",
   "message_get",
   "message_list",
   "work_get",
   "work_list",
   "form_get",
   "form_list",
-  "status_get",
 ];
 
 async function call<T>(
@@ -63,7 +56,7 @@ async function refused(client: Client, name: string, args: Record<string, unknow
   assert.equal(JSON.parse(errorText).code, code);
 }
 
-test("SDK execution/viewer discovery and all 18 calls share records and enforce domain authority", async (t) => {
+test("SDK execution/viewer discovery and all 14 calls share records and enforce domain authority", async (t) => {
   const store = openSqlite(":memory:");
   const { authority } = fixtureAuthority();
   const connections: { client: Client; server: ReturnType<typeof createMcpServer> }[] = [];
@@ -89,17 +82,9 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
   const outsider = await connect("outsider", "execution");
   const tools = (await requester.listTools()).tools;
   assert.deepEqual(tools.map((tool) => tool.name).sort(), [...executionNames].sort());
-  const actorProperties = tools.find((tool) => tool.name === "actor_get")?.outputSchema?.properties;
-  assert.ok(actorProperties && typeof actorProperties === "object");
-  assert.equal(Object.hasOwn(actorProperties, "kind"), false);
   const viewedTools = (await viewer.listTools()).tools;
   assert.deepEqual(viewedTools.map((tool) => tool.name).sort(), [...viewerNames].sort());
   assert.ok(viewedTools.every((tool) => tool.annotations?.readOnlyHint === true));
-  assert.equal((await call<Actor>(requester, "actor_get")).actorID, "requester");
-  const namedActor = await call<Actor>(viewer, "actor_get", { actorID: "owner" });
-  assert.equal(namedActor.actorID, "owner");
-  assert.equal(Object.hasOwn(namedActor, "kind"), false);
-  assert.equal((await call<Page<Actor>>(requester, "actor_list", { limit: 1 })).items.length, 1);
   const ticket = await call<Work>(requester, "work_create", {
     title: "Protocol-delivered work",
     ownerID: "owner",
@@ -123,9 +108,15 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
     "Protocol message",
   );
   assert.equal(
-    (await call<List<Message>>(viewer, "message_list", { direction: "outgoing" })).items.length,
+    (await call<List<Message>>(viewer, "message_list", { counterpartyID: "owner" })).items.length,
     1,
   );
+  assert.deepEqual((await call<List<Message>>(outsider, "message_list", { of: "owner" })).items, [
+    message,
+  ]);
+  await refused(viewer, "message_list", { direction: "outgoing" }, "invalid_input");
+  await refused(viewer, "message_list", {}, "invalid_input");
+  await refused(owner, "message_send", { recipientID: "owner", text: "Self" }, "invalid_input");
   for (const removed of ["message_acknowledge", "message_handle"])
     for (const client of [owner, viewer])
       await refused(client, removed, { messageID: message.messageID }, "not_found");
@@ -163,9 +154,6 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
     status: "resolved",
     resolution: "Answers recorded",
   });
-  const status = await call(owner, "status_set", { line: "Answering over MCP" });
-  assert.deepEqual(await call(viewer, "status_get", { actorID: "owner" }), status);
-  await refused(viewer, "status_set", { line: "Viewer write" }, "forbidden");
   const update = await call<Work>(owner, "work_update", {
     ticketID: ticket.ticketID,
     expectedRevision: 1,
@@ -228,7 +216,7 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
     { formID: form.formID, answers: { answer: "yes" } },
     "conflict",
   );
-  await refused(outsider, "message_get", { messageID: message.messageID }, "not_found");
+  assert.deepEqual(await call(outsider, "message_get", { messageID: message.messageID }), message);
   await refused(
     requester,
     "work_review",
@@ -247,7 +235,8 @@ test("SDK execution/viewer discovery and all 18 calls share records and enforce 
     "invalid_input",
   );
   await refused(owner, "actor_create", { name: "Excluded" }, "not_found");
-  await refused(requester, "actor_get", { kind: "human" }, "invalid_input");
+  for (const removed of ["actor_get", "actor_list", "status_set", "status_get"])
+    await refused(requester, removed, {}, "not_found");
 });
 
 test("SDK boundary sanitizes unexpected failures and checks revoked caller", async (t) => {
@@ -313,7 +302,7 @@ test("SDK boundary sanitizes unexpected failures and checks revoked caller", asy
   const actor = fixture.rows.get("requester");
   assert.ok(actor);
   fixture.rows.set("requester", { ...actor, state: "closed" });
-  await refused(client, "message_list", {}, "forbidden");
+  await refused(client, "message_list", { counterpartyID: "owner" }, "forbidden");
 });
 
 for (const purpose of ["execution", "viewer"] as const) {
@@ -339,7 +328,7 @@ for (const purpose of ["execution", "viewer"] as const) {
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(a);
     await client.connect(b);
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 9);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 14 : 6);
     failing = true;
     await assert.rejects(
       () => client.listTools(),
@@ -356,11 +345,11 @@ for (const purpose of ["execution", "viewer"] as const) {
         return true;
       },
     );
-    const callError = await client.callTool({ name: "actor_get", arguments: {} });
+    const callError = await client.callTool({ name: "work_list", arguments: {} });
     assert.equal(callError.isError, true);
     assert.equal(JSON.stringify(callError).includes(sentinel), false);
     failing = false;
-    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 18 : 9);
+    assert.equal((await client.listTools()).tools.length, purpose === "execution" ? 14 : 6);
     const actor = fixture.rows.get("requester");
     assert.ok(actor);
     fixture.rows.set("requester", { ...actor, state: "closed" });
@@ -373,7 +362,7 @@ for (const purpose of ["execution", "viewer"] as const) {
         return true;
       },
     );
-    await refused(client, "actor_get", {}, "forbidden");
+    await refused(client, "work_list", {}, "forbidden");
   });
 }
 
@@ -413,7 +402,7 @@ test("npm start target serves SDK stdio across independent processes and durable
     id = ticket.ticketID;
   });
   await session("viewer", async (client) => {
-    assert.equal((await client.listTools()).tools.length, 9);
+    assert.equal((await client.listTools()).tools.length, 6);
     assert.equal(
       (await call<Work>(client, "work_get", { ticketID: id })).title,
       "Reopen stdio database",

@@ -4,16 +4,20 @@ Hub embeds this package under its canonical Actor authority. Hub owns identity, 
 
 ## Required host authority
 
-Bind the actual admitted Actor ID to a canonical synchronous `ActorAuthority` and one organization's `WorkspaceStore`. `get` and `list` retain directory visibility. `within(callerID, actorID, ancestorID): boolean` returns true for the anchor itself or any descendant through retained manager edges. Both IDs must exist; unknown member/anchor returns false, even when equal. Include closed members and anchors with no Team depth limit. Revalidate the admitted caller as for other authority reads.
+Bind the actual admitted Actor ID to a canonical synchronous `ActorAuthority` and one organization's `WorkspaceStore`. `get` retains visibility. `within(callerID, actorID, ancestorID): boolean` returns true for the anchor itself or any descendant through retained manager edges. Both IDs must exist; unknown member/anchor returns false, even when equal. Include closed members and anchors with no Team depth limit. Revalidate the admitted caller as for other authority reads.
 
 Implement canonical ancestry at its owner: retained Registry get/manager edges. Team's depth-limited open-report view and the active Directory cannot supply complete historical membership. Workspace stores no hierarchy, Actor kind, relationship edit or fallback registry. Its bound `ActorsClient.within(actorID, ancestorID)` validates ID criteria and revalidates the active caller before delegation, without selected-profile lookup or caller substitution.
 
 ## Adopting 0.6
 
-0.6 changes the persistence interface; Hub's bindings change with it.
+0.6 changes the public contracts and the persistence interface; Hub's bindings change with it.
 
 - **Persistence.** `RecordTable.all()` is replaced by `where(filter)`. It returns the current snapshots, in cursor order, whose every filtered indexed column holds one of the listed values; `where({})` returns every row. `values(column, filter)` returns one column's distinct values among the rows a filter keeps. The `WorkspaceStore` types name each table's indexed columns.
 - **Upgrade.** `openSqlite` upgrades a 0.5 database (version 3) to version 4 on first open. The upgrade adds the indexed columns and rewrites no record; see [persistence](design.md#persistence-and-state-changes). Back up the home before the first start on 0.6.
+- **Status is removed** (`status_set`, `status_get`, `StatusContracts`, the `Status` and `StatusState` schemas and types, `createStatus`, `StatusClient`, `/status` and `bindWorkspace().status`). Hosts derive an Actor's headline from its Work. A 0.5 database's `status` and `status_history` tables stay in the file, unread.
+- **Directory tools are removed** (`actor_get`, `actor_list`, `ActorContracts`, `Page`, `pageOf`, `ListInput` and `ActorsClient.list`). `ActorAuthority` drops `list`: an object literal typed `ActorAuthority` that still declares it no longer compiles, and on any other host object it is never called. `ActorsClient` keeps `get` and `within` for the other modules, and its input schema is `ActorQuery`.
+- **Messages are open.** Any active Actor reads any message and any conversation. `message_send` and `message_list` are at the Report level, and a message to oneself is refused with `invalid_input`. `message_list` takes exactly one of `between: [a, b]`, `counterpartyID` or `of` ([Messages](contracts.md#messages)). `direction` and a read with no selector are refused. A `{counterpartyID, before: "latest"}` read returns what it did, but a `next` or `older` position issued by 0.5 is refused with `invalid_input`; a stored `seq` still continues a forward read. A reader of an Actor's input across conversations pages `of` until a conversation's latest `seq` is one it has handled, then reads each newer conversation `after` its position.
+- **Tools.** The execution server exposes 14 tools and the viewer 6.
 - **Subtree filters.** `ownerWithin` and `requesterWithin` call `ActorAuthority.within` once for each Actor the column holds, not once per row. Owner, requester and status lookups decode only the rows they select.
 
 ## Adopting 0.5
@@ -32,10 +36,10 @@ Implement canonical ancestry at its owner: retained Registry get/manager edges. 
 
 ## Exposure
 
-Every active admitted Actor may read all organization Work and Forms and choose any branch. Membership adds no business write role or Message access. Messages stay private to their two parties. Hub derives each tool's schema and declaration from the package contracts and uses the existing SDK protocol/transport and admitted principal.
+Every active admitted Actor may read all organization Work, Forms and Messages and choose any branch. Membership adds no business write role. Hub derives each tool's schema and declaration from the package contracts and uses the existing SDK protocol/transport and admitted principal.
 
-Human and Agent clients use those same offered Tools under ordinary admitted identity. HTTP projections may compose their results; they may not read Registry/DB/admin/Provider/native paths or synthesize an elevated caller. A list's `actors` map names the Actors it mentions under the caller's own directory visibility. Message delivery positions and dedup remain client responsibilities; organization browsing grants no native execution authority.
+Human and Agent clients use those same offered Tools under ordinary admitted identity. HTTP projections may compose their results; they may not read Registry/DB/admin/Provider/native paths or synthesize an elevated caller. A list's `actors` map names the Actors it mentions under the caller's own Actor visibility. Message delivery positions and dedup remain client responsibilities; organization browsing grants no native execution authority.
 
 ## Verification
 
-Node **>=22.13** remains the declared floor; CI and the packed-consumer check use **22.23.4** and **24.22.1**. Canonical host integration must prove inclusive deep/closed membership, active callers, ordinary cross-branch queries, exact schemas and unchanged business writes and Message privacy. The model-free fixture supplies a retained manager map only for package verification.
+Node **>=22.13** remains the declared floor; CI and the packed-consumer check use **22.23.4** and **24.22.1**. Canonical host integration must prove inclusive deep/closed membership, active callers, ordinary cross-branch queries, exact schemas and unchanged business writes. The model-free fixture supplies a retained manager map only for package verification.

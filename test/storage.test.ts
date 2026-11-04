@@ -178,6 +178,9 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
   const fresh = join(dir, "fresh.sqlite");
   openSqlite(fresh).close();
   assert.equal(version(fresh), 4);
+  const tables = new DatabaseSync(fresh);
+  assert.equal(tables.prepare("SELECT 1 FROM sqlite_schema WHERE name='status'").get(), undefined);
+  tables.close();
   assert.deepEqual(indexes(fresh, "work"), [
     "work_owner",
     "work_requester",

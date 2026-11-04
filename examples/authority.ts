@@ -1,6 +1,6 @@
 /** Model-free canonical authority fixture. This is example data, not a production registry. */
 import type { ActorAuthority } from "../src/actors/index.js";
-import { type Actor, requireThat } from "../src/contracts/index.js";
+import type { Actor } from "../src/contracts/index.js";
 
 export function fixtureAuthority() {
   const rows = new Map<string, Actor>([
@@ -49,16 +49,6 @@ export function fixtureAuthority() {
   ]);
   const authority: ActorAuthority = {
     get: (_caller, id) => rows.get(id),
-    list: (_caller, query) => {
-      const all = [...rows.values()];
-      requireThat(
-        query.after <= all.length,
-        "invalid_input",
-        "directory cursor is beyond fixture head",
-      );
-      const items = all.slice(query.after, query.after + query.limit);
-      return { items, after: query.after + items.length };
-    },
     within: (_caller, actorID, ancestorID) => {
       if (!rows.has(ancestorID)) return false;
       for (

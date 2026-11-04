@@ -32,10 +32,6 @@
       "types": "./dist/src/forms/index.d.ts",
       "default": "./dist/src/forms/index.js"
     },
-    "./status": {
-      "types": "./dist/src/status/index.d.ts",
-      "default": "./dist/src/status/index.js"
-    },
     "./persistence": {
       "types": "./dist/src/persistence/index.d.ts",
       "default": "./dist/src/persistence/index.js"
