@@ -18,7 +18,7 @@ const ask = {
   fields: [{ name: "choice", label: "Which?", required: true, options: ["a", "b"] }],
 };
 type Event = { actorID: string; at: string; action: string; detail: object };
-/** A database as Workspace 0.4 wrote it: no user_version, and Messages may link Work. */
+/** A database from before storage versions: no user_version, and Messages may link Work. */
 function legacy(file: string) {
   const db = new DatabaseSync(file);
   let cursor = 0;
@@ -130,7 +130,7 @@ function version(file: string) {
   }
 }
 
-test("a 0.4 database upgrades once in place and keeps every original event", (t) => {
+test("a version 0 database upgrades once in place and keeps every original event", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "workspace-upgrade-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "legacy.sqlite");
@@ -154,7 +154,7 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
       assert.equal(accepted.title, `Ship ${Array(14).fill("release").join(" ")}…`);
       assert.equal(accepted.goal, longGoal);
       assert.equal(owner.work.get({ ticketID: "unbroken" }).title, `${"x".repeat(119)}…`);
-      // A 0.4 Form named no Work, so 0.6 reads it alone.
+      // A Form before version 3 named no Work, so it reads alone.
       const form = owner.work.get({ askID: "form" });
       assert.ok("formID" in form);
       assert.equal(Object.hasOwn(form, "respondentIDs"), false);
@@ -223,7 +223,7 @@ function indexes(file: string, name: string) {
     db.close();
   }
 }
-/** A database as Workspace 0.5 wrote it: user_version 3, with a Status table. */
+/** A version 3 database, with a Status table. */
 function version3(file: string) {
   const db = new DatabaseSync(file);
   let cursor = 0;
@@ -272,7 +272,7 @@ function version3(file: string) {
   db.close();
 }
 
-test("a 0.5 database upgrades to version 4 by indexing fields, rewriting no record", (t) => {
+test("a version 3 database upgrades to version 4 by indexing fields, rewriting no record", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "workspace-upgrade-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "version3.sqlite");
@@ -373,7 +373,7 @@ test("indexed lookups select current snapshots by column values, through their i
   store.transaction(() => {
     for (let i = 0; i < 300; i++) work(`w${i}`, `o${i % 100}`, i % 3 === 0 ? "accepted" : "open");
     ask("plain", "owner", { workID: "w1" });
-    // A raise is how 0.6 stores an ask passed up; its route starts at the raiser.
+    // A raise is how an ask passed up is stored; its route starts at the raiser.
     ask("raised", "respondent", { raises: [{ actorID: "owner", at }] });
     ask("closed", "outsider", { status: "resolved" });
     ask("unraised", "outsider", { raises: [] });

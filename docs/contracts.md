@@ -8,17 +8,17 @@ Every successful write returns the resulting record: its stable ID, `revision` a
 
 Each contract carries `level`, the smallest organization level that presents it. Report is one agent and its person; Team adds working with other Actors; Organization adds the lifecycle and the system, none of which is in this package. Each level contains the one before it. The tag selects what a client presents; it grants and refuses nothing.
 
-| Tool         | Level  | Input                                                                                                                                         | Purpose                                                  |
-| ------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| message_send | Report | `{recipientID,text}`                                                                                                                          | Send into the pair's conversation                        |
-| message_get  | Team   | `{messageID}`                                                                                                                                 | Read one message                                         |
-| message_list | Report | `{between:[id,id]\|counterpartyID\|of,before?:latest\|older,after?:next\|seq,limit?}`                                                         | Read a conversation, or list an Actor's conversations    |
-| work_create  | Report | `{title,goal?,ownerID?,links?,waitsOn?}`                                                                                                      | Create Work; caller requests it and owns it by default   |
-| work_get     | Report | `{ticketID\|askID,history?}`                                                                                                                  | Read Work with all its asks, or a 0.5 ask with no Work   |
-| work_list    | Report | `{ownerID?,requesterID?:id\|id[],waitsOnActorID?,ownerWithin?,requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}`      | Read matching shared Work, each with its open asks       |
-| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|cancelled,links?,waitsOn?}`, `{ticketID,ask}` or `{close}` | Edit or cancel Work; ask on it; close an ask             |
-| work_submit  | Report | `{ticketID,expectedRevision?,result,evidence?}`                                                                                               | Submit; self-requested Work completes                    |
-| work_answer  | Team   | `{askID,ticketID?,answers?:{field:value},note?,raise?:true}`                                                                                  | Answer or raise an ask, or answer the current submission |
+| Tool         | Level  | Input                                                                                                                                         | Purpose                                                   |
+| ------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| message_send | Report | `{recipientID,text}`                                                                                                                          | Send into the pair's conversation                         |
+| message_get  | Team   | `{messageID}`                                                                                                                                 | Read one message                                          |
+| message_list | Report | `{between:[id,id]\|counterpartyID\|of,before?:latest\|older,after?:next\|seq,limit?}`                                                         | Read a conversation, or list an Actor's conversations     |
+| work_create  | Report | `{title,goal?,ownerID?,links?,waitsOn?}`                                                                                                      | Create Work; caller requests it and owns it by default    |
+| work_get     | Report | `{ticketID\|askID,history?}`                                                                                                                  | Read Work with all its asks, or an older ask with no Work |
+| work_list    | Report | `{ownerID?,requesterID?:id\|id[],waitsOnActorID?,ownerWithin?,requesterWithin?,status?:[...],updatedSince?,order?:recent,after?,limit?}`      | Read matching shared Work, each with its open asks        |
+| work_update  | Report | `{ticketID,expectedRevision?,title?,goal?,ownerID?,progress?,status?:open\|active\|cancelled,links?,waitsOn?}`, `{ticketID,ask}` or `{close}` | Edit or cancel Work; ask on it; close an ask              |
+| work_submit  | Report | `{ticketID,expectedRevision?,result,evidence?}`                                                                                               | Submit; self-requested Work completes                     |
+| work_answer  | Team   | `{askID,ticketID?,answers?:{field:value},note?,raise?:true}`                                                                                  | Answer or raise an ask, or answer the current submission  |
 
 `work_get`, `work_update` and `work_answer` return the record the call reads or writes: Work, or an ask. An ask has `formID` and Work has `ticketID`, and each result schema is their union.
 
@@ -50,14 +50,14 @@ Subtree criteria use the required host `ActorAuthority.within(callerID, actorID,
 
 A Message is `{messageID, conversationID, senderID, recipientID, text, createdAt, seq}` and never changes after it is sent.
 
-- **`conversationID`** names the one ordered series the message belongs to. In this version it is derived from the pair, so each pair has one direct conversation, both directions included. A message to oneself, which 0.5 accepted and 0.6 refuses, has its own. It is opaque: clients compare it and key their own positions by it.
+- **`conversationID`** names the one ordered series the message belongs to. In this version it is derived from the pair, so each pair has one direct conversation, both directions included. A message to oneself, which earlier builds accepted and this one refuses, has its own. It is opaque: clients compare it and key their own positions by it.
 - **`seq`** is the message's place in the one Message order, which spans every conversation and follows commit order. Clients compare it with their own positions, such as a seen-through or delivered-through `seq`.
 
 `message_list` takes exactly one of three selectors and returns `{items, next, older, actors}`. No read mixes several conversations into one list.
 
-- **`between: [a, b]`** reads that pair's conversation, in either order. `[a, a]` reads a 0.5 self conversation.
+- **`between: [a, b]`** reads that pair's conversation, in either order. `[a, a]` reads a self conversation stored before self messages were refused.
 - **`counterpartyID`** reads the caller's conversation with that Actor, the same as `between: [caller, counterpartyID]`. A position from one form continues the other.
-- **`of`** lists that Actor's conversations, newest first. Each item is its conversation's latest message, and the counterparty is its party other than `of`; a 0.5 self conversation is listed too, with `of` as both parties. `next` continues to older conversations, and `older` is null. `of` takes no `before`, and its `after` is a `next` position. A conversation that gets a message between page reads moves to the front, as with `order: "recent"`.
+- **`of`** lists that Actor's conversations, newest first. Each item is its conversation's latest message, and the counterparty is its party other than `of`; a self conversation stored before self messages were refused is listed too, with `of` as both parties. `next` continues to older conversations, and `older` is null. `of` takes no `before`, and its `after` is a `next` position. A conversation that gets a message between page reads moves to the front, as with `order: "recent"`.
 
 A conversation reads one of two ways, with items ascending.
 
@@ -78,7 +78,7 @@ Work is the unit of progress. A Work record holds:
 
 `work_create` makes the caller the requester and, unless `ownerID` names another active Actor, the owner. A waited-on Actor or Work must exist. `work_update` sets `waitsOn: null` to clear it and `links: []` to empty them.
 
-New Work is `open`. In `open`, `active` or `changes_requested`, the owner may edit its fields and set `open` or `active`, and the requester may edit goal and owner, or set `cancelled`. Cancelled Work is terminal and frozen. Work that can't move without someone asks; Work held up outside the organization, or by other Work, stays `active` and says what it waits on. So `blocked` is refused, with a message that says so. A Work row that 0.5 stored as `blocked` reads as `active` in every read, filter and rule; its next write stores `active`, and its history keeps the `blocked` write.
+New Work is `open`. In `open`, `active` or `changes_requested`, the owner may edit its fields and set `open` or `active`, and the requester may edit goal and owner, or set `cancelled`. Cancelled Work is terminal and frozen. Work that can't move without someone asks; Work held up outside the organization, or by other Work, stays `active` and says what it waits on. So `blocked` is refused, with a message that says so. A Work row stored as `blocked`, before `blocked` was refused, reads as `active` in every read, filter and rule; its next write stores `active`, and its history keeps the `blocked` write.
 
 `work_submit` records a new submission. On Work its owner requested itself it completes at once: `accepted`, with `completedAt` and no review. Other Work enters `submitted` and is frozen until its requester answers the current submission with `work_answer`. The answer names the submission by its ID (`askID`, with an optional `ticketID` that must be the Work it is on) and gives `answers: {verdict}`; its `note` is the comment. It is stored as `review`. Accepting needs no note, sets `completedAt` and is terminal; requesting changes needs a note and returns the Work to its owner. Follow-up work gets a new ticket.
 
@@ -98,7 +98,7 @@ An ask is part of the Work its asker owns: `work_update {ticketID, ask}` asks on
 
 The record keeps its Form field names (`formID`, `requesterID` for the asker) until the wire takes the model's words; arguments name it `askID`. Only the Work's owner asks, on Work that is open, active or changes requested, and the root doesn't ask. An ask is stored in its own row, so asking, answering and closing never move the Work's revision.
 
-**Reads.** `work_get {ticketID}` returns the Work with `asks`: all of them, open and closed, in the order they were asked (asks made in the same millisecond keep update order). `work_get {askID}` returns the Work an ask is on, the same way, and the current submission's ID returns its Work. A 0.5 ask that named no Work is returned alone. `work_list` items carry their open asks. Write results carry no `asks`.
+**Reads.** `work_get {ticketID}` returns the Work with `asks`: all of them, open and closed, in the order they were asked (asks made in the same millisecond keep update order). `work_get {askID}` returns the Work an ask is on, the same way, and the current submission's ID returns its Work. An ask stored before asks lived on Work, which named no Work, is returned alone. `work_list` items carry their open asks. Write results carry no `asks`.
 
 **Answering.** Any active Actor answers an open ask with `work_answer {askID, answers, note?}`: a complete answer set, where required fields are nonblank, every named field exists and a choice matches an option. The response is recorded under its responder with the time it was given. A responder that answers again replaces its own response, and history keeps every earlier one. The first answer resolves the ask; an ask with `collect` stays open for more answers until its asker closes it. An answer to a closed ask conflicts.
 
@@ -110,9 +110,9 @@ An `approval` ask authorizes something that can't be undone, so only the asker's
 
 **When Work moves on.** Submitting, cancelling or reassigning Work cancels its open asks, since their asker no longer moves it. Each gets `status: cancelled` and a `resolution` with a fixed `text` and a `reason`: `submitted`, `cancelled` or `reassigned`. Its history entry is by the Actor who moved the Work, at the same time. A new ask on submitted, accepted or cancelled Work is refused.
 
-**Asks from 0.5.** They read as stored: an ask with no Work is read, answered and closed by its ID, an ask by another Actor shows under the Work it names, and an ask left open on submitted Work is still answered and closed. A 0.5 ask's `cause` stays stored and unread, and it reads with `raises: []`. Its next write stores it without `cause`; history keeps it.
+**Asks stored before asks lived on Work.** They read as stored: an ask with no Work is read, answered and closed by its ID, an ask by another Actor shows under the Work it names, and an ask left open on submitted Work is still answered and closed. Such an ask's `cause` stays stored and unread, and it reads with `raises: []`. Its next write stores it without `cause`; history keeps it.
 
-**Hosts' reads.** `WorkClient.asks({requesterID?, routedTo?, answeredBy?, status?, after?, limit?})` is not a tool. It lists asks wherever they are: an asker's own, those routed to an Actor, and those an Actor answered. 0.5 asks with no Work are included.
+**Hosts' reads.** `WorkClient.asks({requesterID?, routedTo?, answeredBy?, status?, after?, limit?})` is not a tool. It lists asks wherever they are: an asker's own, those routed to an Actor, and those an Actor answered. Older asks with no Work are included.
 
 **History.** These action names are part of the contract, since hosts label what changed by them.
 - **An ask's history:** `created` (asked), `responded` (answered), `raised`, `resolved` (closed as resolved) and `cancelled` (closed as cancelled by its asker or stand-in, or by Q12).

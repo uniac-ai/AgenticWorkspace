@@ -187,7 +187,7 @@ test("an Actor's conversations come newest first, each as its latest message", (
   assert.throws(() => f.as("owner").list({ of: "requester", after: token(page.next) }), invalid);
 });
 
-test("conversations are open to every Actor, keep 0.5 self messages and closed peers' history", (t) => {
+test("conversations are open to every Actor, keep stored self messages and closed peers' history", (t) => {
   const f = fixture(t);
   const incoming = f.as("requester").send({ recipientID: "owner", text: "Incoming" });
   const outgoing = f.as("owner").send({ recipientID: "requester", text: "Outgoing" });

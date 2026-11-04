@@ -280,7 +280,7 @@ test("direct messages need no work and arbitrary prose creates no record", (t) =
   );
 });
 
-test("an ask sits on Work its asker owns, and a 0.5 ask reads where it was left", (t) => {
+test("an ask sits on Work its asker owns, and an ask stored before reads where it was left", (t) => {
   const f = fixture(t);
   const requester = f.as("requester");
   const owner = f.as("owner");
@@ -322,7 +322,8 @@ test("an ask sits on Work its asker owns, and a 0.5 ask reads where it was left"
   const linked = ask(owner.work.update({ ticketID: ticket.ticketID, ask: question }));
   assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
   assert.deepEqual(work(outsider.work.get({ askID: linked.formID })).asks, [linked]);
-  // Asks 0.5 stored: one with no Work and a cause, and one by another Actor on this Work.
+  // Asks stored before asks lived on Work: one with no Work and a cause, and one by another Actor
+  // on this Work.
   const at = new Date().toISOString();
   const stored = (formID: string, requesterID: string, extra: object) => {
     const row = {
@@ -356,7 +357,7 @@ test("an ask sits on Work its asker owns, and a 0.5 ask reads where it was left"
     requester.work.asks({ requesterID: "respondent" }).items.map((row) => row.formID),
     ["orphan"],
   );
-  // A 0.5 ask with no Work routes like any ask: respondent's to its manager, owner.
+  // An older ask with no Work routes like any ask: respondent's to its manager, owner.
   assert.deepEqual(
     requester.work.asks({ routedTo: "owner" }).items.map((row) => row.formID),
     ["orphan"],
@@ -370,7 +371,7 @@ test("an ask sits on Work its asker owns, and a 0.5 ask reads where it was left"
       owner.work.answer({ askID: linked.formID, ticketID: own.ticketID, answers: { answer: "x" } }),
     rejects("not_found"),
   );
-  // Reassigning the Work cancels its open asks, the 0.5 one included (Q12).
+  // Reassigning the Work cancels its open asks, the older one included (Q12).
   const moved = work(
     requester.work.update({
       ticketID: ticket.ticketID,
@@ -1172,7 +1173,7 @@ test("the asker closes its ask, or its nearest open manager once it is closed, o
     () => f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }),
     rejects("conflict"),
   );
-  // A 0.5 ask left open on submitted Work is still answered and closed, by a stand-in once its
+  // An older ask left open on submitted Work is still answered and closed, by a stand-in once its
   // asker is closed.
   const at = new Date().toISOString();
   const row = {

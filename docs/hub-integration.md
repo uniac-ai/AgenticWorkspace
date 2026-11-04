@@ -8,15 +8,15 @@ Bind the actual admitted Actor ID to a canonical synchronous `ActorAuthority` an
 
 Implement canonical ancestry at its owner: retained Registry get/manager edges. Team's depth-limited open-report view and the active Directory cannot supply complete historical membership. Workspace stores no hierarchy, Actor kind, relationship edit or fallback registry. Its bound `ActorsClient.within(actorID, ancestorID)` validates ID criteria and revalidates the active caller before delegation, without selected-profile lookup or caller substitution.
 
-## Adopting 0.6
+## Changes from the previous build
 
-0.6 changes the public contracts and the persistence interface; Hub's bindings change with it.
+This build changes the public contracts and the persistence interface from the previous build, which kept a version 3 store; Hub's bindings change with it.
 
 - **Persistence.** `RecordTable.all()` is replaced by `where(filter)`. It returns the current snapshots, in cursor order, whose every filtered indexed column holds one of the listed values; `where({})` returns every row. `values(column, filter)` returns one column's distinct values among the rows a filter keeps. The `WorkspaceStore` types name each table's indexed columns.
-- **Upgrade.** `openSqlite` upgrades a 0.5 database (version 3) to version 4 on first open. The upgrade adds the indexed columns and rewrites no record; see [persistence](design.md#persistence-and-state-changes). Back up the home before the first start on 0.6.
-- **Status is removed** (`status_set`, `status_get`, `StatusContracts`, the `Status` and `StatusState` schemas and types, `createStatus`, `StatusClient`, `/status` and `bindWorkspace().status`). Hosts derive an Actor's headline from its Work. A 0.5 database's `status` and `status_history` tables stay in the file, unread.
+- **Upgrade.** `openSqlite` upgrades a version 3 database to version 4 on first open. The upgrade adds the indexed columns and rewrites no record; see [persistence](design.md#persistence-and-state-changes). Back up the home before the first start on this build.
+- **Status is removed** (`status_set`, `status_get`, `StatusContracts`, the `Status` and `StatusState` schemas and types, `createStatus`, `StatusClient`, `/status` and `bindWorkspace().status`). Hosts derive an Actor's headline from its Work. A version 3 database's `status` and `status_history` tables stay in the file, unread.
 - **Directory tools are removed** (`actor_get`, `actor_list`, `ActorContracts`, `Page`, `pageOf`, `ListInput` and `ActorsClient.list`). `ActorAuthority` drops `list`: an object literal typed `ActorAuthority` that still declares it no longer compiles, and on any other host object it is never called. `ActorsClient` keeps `get` and `within` for the other modules, and its input schema is `ActorQuery`.
-- **Messages are open.** Any active Actor reads any message and any conversation. `message_send` and `message_list` are at the Report level, and a message to oneself is refused with `invalid_input`. `message_list` takes exactly one of `between: [a, b]`, `counterpartyID` or `of` ([Messages](contracts.md#messages)). `direction` and a read with no selector are refused. A `{counterpartyID, before: "latest"}` read returns what it did, but a `next` or `older` position issued by 0.5 is refused with `invalid_input`; a stored `seq` still continues a forward read. A reader of an Actor's input across conversations pages `of` until a conversation's latest `seq` is one it has handled, then reads each newer conversation `after` its position.
+- **Messages are open.** Any active Actor reads any message and any conversation. `message_send` and `message_list` are at the Report level, and a message to oneself is refused with `invalid_input`. `message_list` takes exactly one of `between: [a, b]`, `counterpartyID` or `of` ([Messages](contracts.md#messages)). `direction` and a read with no selector are refused. A `{counterpartyID, before: "latest"}` read returns what it did, but a `next` or `older` position issued by the previous build is refused with `invalid_input`; a stored `seq` still continues a forward read. A reader of an Actor's input across conversations pages `of` until a conversation's latest `seq` is one it has handled, then reads each newer conversation `after` its position.
 - **`ActorAuthority.manager` is required.** Asks route through it, the root is the Actor with no manager (it doesn't ask or raise), and a closed requester's or asker's rights pass up it to the nearest open manager. An Actor the caller can't see counts as closed only in the routed read (`asks {routedTo}`). For every right that passes to a stand-in, and for who may raise, it refuses the write with `not_found`. `ActorsClient` gains `manager(actorID)`, and `standIn` in `/actors` returns an Actor's ID while it is open, its nearest open manager's once it is closed, or null when no manager is open (a chain that loops counts as none); it throws `not_found` at an Actor the caller can't see. `routedStandIn` is the same walk for routing reads, counting such an Actor as closed.
 - **Refusals name their issues.** An input outside a contract is refused with `invalid_input` and a message naming each schema issue (`path: message`), as the Hub's own validation does, instead of one fixed sentence.
 - **Work status.** `blocked` is gone: `work_update` refuses it with a message naming the habit (ask, or stay active with `waitsOn`), the same words from the Workspace and from a host that validates with the contract, and `work_list` refuses it as a `status` filter. A stored `blocked` reads as `active`, so a `status: ["active"]` filter finds it. `cancelled` is new: the requester sets it with `expectedRevision` on `open`, `active` or `changes_requested` Work, and it is terminal.
@@ -27,20 +27,20 @@ Implement canonical ancestry at its owner: retained Registry get/manager edges. 
   - **Closing:** `work_update {close: {askID, status, resolution}}`, by the asker or its nearest open manager, with no `expectedRevision`.
   - **Answering and raising:** any active Actor answers with `work_answer {askID, answers, note?}`, an approval only the asker's strict managers. `{askID, raise: true}` raises it: only the Actor it is routed to, never the root. A raise appends `{actorID, at}` to `raises`.
   - **Reads:**
-    - `work_get {ticketID | askID}` returns the Work with `asks`, all of them, or a 0.5 ask with no Work alone. The current submission's ID returns its Work.
-    - `work_list` items carry their open asks, a 0.5 ask by another Actor included. So "waiting" (model §3) counts only asks whose `requesterID` is the Work's `ownerID`.
+    - `work_get {ticketID | askID}` returns the Work with `asks`, all of them, or an ask stored before asks lived on Work, with no Work, alone. The current submission's ID returns its Work.
+    - `work_list` items carry their open asks, an older ask by another Actor included. So "waiting" (model §3) counts only asks whose `requesterID` is the Work's `ownerID`.
     - Write results carry no `asks`.
   - **Results:** `work_get`, `work_update` and `work_answer` return `Work | Form`. Their output schemas are unions with `type: "object"` at the top; a host projecting the contracts to JSON Schema must add that `type` too, since MCP clients refuse an output schema without it. Tell the records apart by `ticketID` and `formID`.
   - **Q12:** submitting, cancelling or reassigning Work cancels its open asks, each with `resolution.reason` (`submitted`, `cancelled` or `reassigned`).
   - **Hosts' read:** `WorkClient.asks({requesterID?, routedTo?, answeredBy?, status?, after?, limit?})` lists asks wherever they are: an Actor's own (`status: ["open"]` for the open ones), those routed to an Actor (raises included), and those an Actor answered. It is not a tool, and it replaces the 100-ID `requesterID` list for a manager's needs.
-  - **0.5 asks:** they read as stored, without `cause` and with `raises: []`. A write on one (an answer, a close, Q12) stores it without `cause`; history keeps it.
+  - **Asks stored before asks lived on Work:** they read as stored, without `cause` and with `raises: []`. A write on one (an answer, a close, Q12) stores it without `cause`; history keeps it.
   - **History action names** on asks and Work, and `resolution.reason`, are contract; see [asks](contracts.md#asks).
 - **Tools.** The execution server exposes 9 tools and the viewer 4.
 - **Subtree filters.** `ownerWithin` and `requesterWithin` call `ActorAuthority.within` once for each Actor the column holds, not once per row. Owner, requester and status lookups decode only the rows they select.
 
-## Adopting 0.5
+## Changes with storage version 3
 
-0.5 changes the public contracts; Hub's bindings and stored-record checks change with it.
+The build that introduced storage version 3 changed the public contracts; Hub's bindings and stored-record checks changed with it.
 
 - **Levels.** Every contract carries `level`: `report`, `team` or `organization`. Hub's tool definitions can carry the tag through to the clients that present a level.
 - **Records.** Work and Form records carry `revision` and `updatedAt` and no `cursor`. History is present only on `work_get`/`form_get` with `history: true`, never on lists or write results.
@@ -50,7 +50,7 @@ Implement canonical ancestry at its owner: retained Registry get/manager edges. 
 - **Status.** A new module: `status_set` and `status_get`, a `status` table in the same database, `createStatus` at `/status`, and `status` in `bindWorkspace`. The execution server exposes 18 tools and the viewer 9.
 - **Messages.** A Message is `{messageID, conversationID, senderID, recipientID, text, createdAt, seq}`, with no `workID`, revision or history. `createMessages(actors, store)` takes no Work reader. `message_list` accepts a `seq` as `after`, so a reader can resume from the last message it handled.
 - **Persistence.** `RecordTable` snapshots carry `updatedAt` beside `revision` and `cursor`, and `save` returns the snapshot without history. A check that compares a stored Message with its original state, such as the legacy import's restart verification, leaves out `revision`, `cursor` and `updatedAt`.
-- **Upgrade.** `openSqlite` upgrades a 0.4 database in place on first open and refuses one newer than the package; see [persistence](design.md#persistence-and-state-changes). Back up the home before the first start on 0.5, as for any schema change.
+- **Upgrade.** `openSqlite` upgrades a version 0 database in place on first open and refuses one newer than the package; see [persistence](design.md#persistence-and-state-changes). Back up the home before a first start that upgrades the store, as for any schema change.
 
 ## Exposure
 
