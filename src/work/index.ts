@@ -131,7 +131,7 @@ export function createWork(
         { actorID: caller, at, action: "updated", detail },
         expectedRevision ?? row.revision,
       );
-      // Once the owner no longer moves the Work, its open asks wait on nobody (Q12).
+      // Once the owner no longer moves the Work, its open asks wait on nobody.
       if (cancel) cancelOpen(forms, row.ticketID, caller, at, "cancelled");
       else if (ownerID !== undefined && ownerID !== row.ownerID)
         cancelOpen(forms, row.ticketID, caller, at, "reassigned");

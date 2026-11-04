@@ -14,7 +14,10 @@ import {
 } from "./common.js";
 import { AskClose, AskInput, Form } from "./forms.js";
 
-/** A stored 0.5 `blocked` reads as `active`; `cancelled` is its requester's terminal state. */
+/**
+ * A `blocked` stored before it was refused reads as `active`; `cancelled` is its requester's
+ * terminal state.
+ */
 export const WorkStatus = z.enum([
   "open",
   "active",
@@ -103,7 +106,7 @@ export const WorkContracts = {
   ),
   work_get: contract(
     "report",
-    "Read Work with all its asks, by ticketID, or by askID: the Work an ask (or the current submission) is on, or a 0.5 ask with no Work alone. History only when asked, for the Work and each ask.",
+    "Read Work with all its asks, by ticketID, or by askID: the Work an ask (or the current submission) is on, or an older ask with no Work alone. History only when asked, for the Work and each ask.",
     z
       .strictObject({
         ticketID: ID.optional(),

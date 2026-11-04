@@ -42,7 +42,7 @@ export function createMcpServer(clients: WorkspaceClients, purpose: McpPurpose):
     work_answer: bind(WorkContracts.work_answer, (input) => work.answer(input)),
   };
   const server = new Server(
-    { name: `agentic-workspace-${purpose}`, version: "0.5.0" },
+    { name: `agentic-workspace-${purpose}`, version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => {

@@ -1,6 +1,6 @@
 # Design and boundaries
 
-The lasting accepted references are [Workspace first version tool list](https://chatgpt.com/space/page_120b6e009e708191ad4dabcb0a739053) and [Agent coordination build or reuse assessment](https://chatgpt.com/space/page_836285fe88908191a181d7e96783f3aa). The graphs below preserve the accepted component and exposure graphs. Exact contracts and local policies were subsequently settled by delivery management before implementation; package placement inside Hub was selected by the human.
+The graphs below are the component and exposure graphs; [contracts.md](contracts.md) holds the exact contracts and local policies.
 
 ## Component dependencies
 
@@ -46,13 +46,13 @@ A Message's `conversationID` is derived from its pair when read and its `seq` is
 
 ## Persistence and state changes
 
-SQLite has separate current-snapshot and history tables for Messages, Work and asks (the `forms` table); a 0.5 database also holds the `status` and `status_history` tables, which 0.6 leaves in place, unread. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. A record's `updatedAt` is the time of the history entry for its current revision. Old submissions, reviews and responses remain in history after newer ones replace their current fields; reads return history only when asked. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
+SQLite has separate current-snapshot and history tables for Messages, Work and asks (the `forms` table); a version 3 database also holds the `status` and `status_history` tables, which this package leaves in place, unread. There is no Actor table. Each mutation writes the current snapshot and one module-owned history entry together inside `BEGIN IMMEDIATE`/commit, or rolls back both. History includes actor, time, action, revision, cursor and changed details. A record's `updatedAt` is the time of the history entry for its current revision. Old submissions, reviews and responses remain in history after newer ones replace their current fields; reads return history only when asked. IDs are UUIDs; the Work primary ID is named `ticketID`, and other records carry the same value as `workID`.
 
-The database records its schema in `PRAGMA user_version`. Opening a database runs, in one transaction, every upgrade step after its version: 0 is a database written by 0.4 or earlier, or a new one, where the data steps find no rows. Steps change current snapshots in place and never rewrite history, so an original value a step removes stays in the event that recorded it. A database newer than the package is refused and left unchanged. A title a step derives is the first line of the source text, cut at a word boundary to 120 characters with "…"; the source text is unchanged.
+The database records its schema in `PRAGMA user_version`. Opening a database runs, in one transaction, every upgrade step after its version: 0 is a database from before storage versions, or a new one, where the data steps find no rows. Steps change current snapshots in place and never rewrite history, so an original value a step removes stays in the event that recorded it. A database newer than the package is refused and left unchanged. A title a step derives is the first line of the source text, cut at a word boundary to 120 characters with "…"; the source text is unchanged.
 
 - Version 1 removes `workID` from Message snapshots.
 - Version 2 gives Work a `title` from its goal and empty `links`, and gives accepted Work the `completedAt` of the review that accepted it.
-- Version 3 turns Forms into asks. Each ask gets a `title` from its first field's label, empty `links`, `approval: false` and `collect: true`, because a 0.4 Form stayed open until its requester closed it and keeps doing so. `respondentIDs` is removed, each option string becomes `{value}`, and each response becomes `{answers, at}`, with the time of that responder's last answer.
+- Version 3 turns Forms into asks. Each ask gets a `title` from its first field's label, empty `links`, `approval: false` and `collect: true`, because a Form before version 3 stayed open until its requester closed it and keeps doing so. `respondentIDs` is removed, each option string becomes `{value}`, and each response becomes `{answers, at}`, with the time of that responder's last answer.
 - Version 4 adds indexed, generated columns and rewrites no record:
   - Messages' `sender` and `recipient`;
   - Work's `owner`, `requester`, `status` and `submission` (the current submission's ID). The `status` column holds a stored `blocked` as `active`. The owner and requester indexes are on (party, status);
