@@ -83,19 +83,20 @@ export function createForms(
       const query = parse(FormContracts.form_list.input, input);
       actors.get();
       const { after: _after, limit: _limit, ...filter } = query;
-      const requesters = query.requesterID === undefined ? undefined : [query.requesterID].flat();
       return traverse(
         actors,
         table,
         query,
         ["forms", filter],
-        (row) =>
-          (query.workID === undefined || row.workID === query.workID) &&
-          (requesters === undefined || requesters.includes(row.requesterID)) &&
-          (query.requesterWithin === undefined ||
-            actors.within(row.requesterID, query.requesterWithin)) &&
-          (query.status === undefined || query.status.includes(row.status)) &&
-          (query.updatedSince === undefined || row.updatedAt >= query.updatedSince),
+        {
+          filter: {
+            requester: query.requesterID === undefined ? undefined : [query.requesterID].flat(),
+            status: query.status,
+            work: query.workID === undefined ? undefined : [query.workID],
+          },
+          within: { requester: query.requesterWithin },
+        },
+        (row) => query.updatedSince === undefined || row.updatedAt >= query.updatedSince,
         (row) => [row.requesterID, ...Object.keys(row.responses)],
       );
     },

@@ -46,7 +46,7 @@ The host composes canonical Actor authority and a WorkspaceStore for one Hub org
 
 Work and Form lists go in update order by default: a record moves to the end of that order whenever it changes. `order: "recent"` goes newest first. `updatedSince` keeps records whose `updatedAt` is at or after the given time, which is how a reader picks up changes since it last looked. Lists are current upserts, not snapshots: a record updated during a traversal can appear again later in update order, and a record that stops matching leaves no tombstone. Paging `order: "recent"` can skip a record that is updated between page reads, because the update moves it to the front, ahead of the pages already read. That suits a view that refetches its first page when records change; it is not a way to read every record. A reader that needs a complete current view pages in update order or lists again from the start, and reconciles IDs.
 
-The page `limit` defaults to 50 and is at most 100. It bounds the returned rows, not the scan: the v1 adapter loads current snapshots and applies every filter before the limit.
+The page `limit` defaults to 50 and is at most 100. It bounds the returned rows, not the scan. Owner, requester, status and `workID` filters select rows through indexed columns, and the adapter decodes only the snapshots they keep. A subtree filter reads membership once for each Actor the column holds among the rows the other indexed filters keep, not once per row. The remaining filters then apply before the limit. A list reads the rows committed before it starts; a row committed during the read waits for the next one.
 
 ### Filters
 

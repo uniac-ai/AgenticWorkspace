@@ -290,7 +290,7 @@ test("SDK boundary sanitizes unexpected failures and checks revoked caller", asy
   const errorText = (result.content as { type: string; text: string }[])[0]?.text;
   assert.ok(errorText);
   assert.equal(JSON.parse(errorText).code, "internal_error");
-  store.messages.all = () => {
+  store.messages.where = () => {
     throw new Error("private-message-credential-sentinel");
   };
   const recentFailure = await client.callTool({

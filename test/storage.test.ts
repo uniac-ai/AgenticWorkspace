@@ -163,7 +163,13 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
     } finally {
       store.close();
     }
-    assert.equal(version(file), 3);
+    assert.equal(version(file), 4);
+    assert.deepEqual(indexes(file, "forms"), [
+      "forms_requester",
+      "forms_route",
+      "forms_status",
+      "forms_work",
+    ]);
   }
   const store = openSqlite(file);
   try {
@@ -176,10 +182,252 @@ test("a 0.4 database upgrades once in place and keeps every original event", (t)
   }
   const fresh = join(dir, "fresh.sqlite");
   openSqlite(fresh).close();
-  assert.equal(version(fresh), 3);
-  const newer = new DatabaseSync(file);
-  newer.exec("PRAGMA user_version=99");
-  newer.close();
-  assert.throws(() => openSqlite(file), /version 99 is newer/);
-  assert.equal(version(file), 99);
+  assert.equal(version(fresh), 4);
+  assert.deepEqual(indexes(fresh, "work"), [
+    "work_owner",
+    "work_requester",
+    "work_status",
+    "work_submission",
+  ]);
+});
+
+const rows = (file: string) => {
+  const db = new DatabaseSync(file);
+  try {
+    return ["messages", "work", "forms", "status"].flatMap((name) => [
+      db.prepare(`SELECT id,revision,cursor,data FROM ${name} ORDER BY id`).all(),
+      db.prepare(`SELECT id,revision,cursor,event FROM ${name}_history ORDER BY cursor`).all(),
+    ]);
+  } finally {
+    db.close();
+  }
+};
+function indexes(file: string, name: string) {
+  const db = new DatabaseSync(file);
+  try {
+    return db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+      )
+      .all(name)
+      .map((row) => String(row.name))
+      .sort();
+  } finally {
+    db.close();
+  }
+}
+/** A database as Workspace 0.5 wrote it: user_version 3, with a Status table. */
+function version3(file: string) {
+  const db = new DatabaseSync(file);
+  let cursor = 0;
+  for (const name of ["messages", "work", "forms", "status"])
+    db.exec(`
+      CREATE TABLE ${name} (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, cursor INTEGER NOT NULL UNIQUE, data TEXT NOT NULL);
+      CREATE TABLE ${name}_history (id TEXT NOT NULL, revision INTEGER NOT NULL, cursor INTEGER NOT NULL UNIQUE, event TEXT NOT NULL, PRIMARY KEY (id, revision));
+    `);
+  function insert(name: string, id: string, data: object) {
+    cursor++;
+    const event = { actorID: "owner", at, action: "created", detail: {}, revision: 1, cursor };
+    db.prepare(`INSERT INTO ${name}_history(id,revision,cursor,event) VALUES(?,?,?,?)`).run(
+      id,
+      1,
+      cursor,
+      JSON.stringify(event),
+    );
+    db.prepare(`INSERT INTO ${name}(id,revision,cursor,data) VALUES(?,?,?,?)`).run(
+      id,
+      1,
+      cursor,
+      JSON.stringify(data),
+    );
+  }
+  const work = { requesterID: "requester", ownerID: "owner", links: [], createdAt: at };
+  insert("work", "held", { ...work, ticketID: "held", title: "Held", status: "blocked" });
+  const asked = {
+    formID: "asked",
+    requesterID: "owner",
+    title: "Which?",
+    links: [],
+    workID: "held",
+    cause: "carried",
+    approval: false,
+    collect: false,
+    fields: [{ name: "x", label: "Which?", required: true }],
+    status: "open",
+    createdAt: at,
+    responses: {},
+  };
+  insert("forms", "asked", asked);
+  const sent = { senderID: "requester", recipientID: "owner", text: "Hi", createdAt: at };
+  insert("messages", "m", { messageID: "m", ...sent });
+  insert("status", "owner", { actorID: "owner", line: "Holding", links: [] });
+  db.exec("PRAGMA user_version=3");
+  db.close();
+}
+
+test("a 0.5 database upgrades to version 4 by indexing fields, rewriting no record", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "workspace-upgrade-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "version3.sqlite");
+  version3(file);
+  const before = rows(file);
+  openSqlite(file).close();
+  assert.equal(version(file), 4);
+  assert.deepEqual(rows(file), before);
+  assert.deepEqual(indexes(file, "messages"), ["messages_recipient", "messages_sender"]);
+  assert.deepEqual(indexes(file, "work"), [
+    "work_owner",
+    "work_requester",
+    "work_status",
+    "work_submission",
+  ]);
+  assert.deepEqual(indexes(file, "forms"), [
+    "forms_requester",
+    "forms_route",
+    "forms_status",
+    "forms_work",
+  ]);
+  assert.deepEqual(indexes(file, "status"), []);
+  const store = openSqlite(file);
+  try {
+    assert.deepEqual(
+      store.work.where({ status: ["active"] }).map((row) => [row.ticketID, row.status]),
+      [["held", "blocked"]],
+    );
+    assert.deepEqual(store.forms.values("route", { work: ["held"] }), ["owner"]);
+    const owner = bindWorkspace(fixtureAuthority().authority, store, "owner").work;
+    const listed = (status: ("active" | "blocked")[]) =>
+      owner.list({ status }).items.map((row) => row.ticketID);
+    assert.deepEqual(listed(["blocked"]), ["held"]);
+    assert.deepEqual(listed(["active"]), []);
+  } finally {
+    store.close();
+  }
+  assert.deepEqual(rows(file), before);
+});
+
+test("a newer database is refused unchanged, and a failed step rolls back every step", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "workspace-refusal-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const newer = join(dir, "newer.sqlite");
+  version3(newer);
+  const db = new DatabaseSync(newer);
+  db.exec("PRAGMA user_version=5");
+  db.close();
+  const before = rows(newer);
+  assert.throws(() => openSqlite(newer), /version 5 is newer/);
+  assert.equal(version(newer), 5);
+  assert.deepEqual(rows(newer), before);
+  assert.deepEqual(indexes(newer, "work"), []);
+  const broken = join(dir, "broken.sqlite");
+  version3(broken);
+  const bad = new DatabaseSync(broken);
+  bad.exec("UPDATE work SET data='not json'");
+  bad.close();
+  assert.throws(() => openSqlite(broken), /malformed JSON/);
+  assert.equal(version(broken), 3);
+  assert.deepEqual(indexes(broken, "messages"), []);
+});
+
+test("indexed lookups select current snapshots by column values, through their indexes", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "workspace-lookup-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "lookups.sqlite");
+  let store = openSqlite(file);
+  const event = { actorID: "owner", at, action: "created", detail: {} };
+  const work = (ticketID: string, ownerID: string, status: "open" | "accepted") =>
+    store.work.save(
+      ticketID,
+      {
+        ticketID,
+        requesterID: "requester",
+        ownerID,
+        title: ticketID,
+        status,
+        links: [],
+        createdAt: at,
+      },
+      event,
+    );
+  const ask = (formID: string, requesterID: string, extra: object = {}) =>
+    store.forms.save(
+      formID,
+      {
+        formID,
+        requesterID,
+        title: formID,
+        links: [],
+        approval: false,
+        collect: false,
+        fields: [{ name: "x", label: "X", required: true }],
+        status: "open",
+        createdAt: at,
+        responses: {},
+        ...extra,
+      },
+      event,
+    );
+  store.transaction(() => {
+    // Many owners and few statuses, so an owner and status filter has a more selective index.
+    for (let i = 0; i < 300; i++) work(`w${i}`, `o${i % 100}`, i % 3 === 0 ? "accepted" : "open");
+    ask("plain", "owner", { workID: "w1" });
+    // A raise is how 0.6 stores an ask passed up; its route starts at the raiser.
+    ask("raised", "respondent", { raises: [{ actorID: "owner", at }] } as never);
+    ask("closed", "outsider", { status: "resolved" });
+    ask("unraised", "outsider", { raises: [] } as never);
+    const raises = [
+      { actorID: "owner", at },
+      { actorID: "requester", at },
+    ];
+    ask("twice", "respondent", { raises } as never);
+  });
+  store.close();
+  store = openSqlite(file);
+  t.after(() => store.close());
+  const ids = (snapshots: { cursor: number }[]) => snapshots.map((row) => row.cursor);
+  assert.deepEqual(
+    store.work.where({ owner: ["o1"], status: ["open"] }).map((row) => row.ticketID),
+    ["w1", "w101"],
+  );
+  assert.deepEqual(ids(store.forms.where({})), [1, 2, 3, 4, 5]);
+  assert.deepEqual(ids(store.forms.where({ requester: undefined })), [1, 2, 3, 4, 5]);
+  assert.deepEqual(
+    store.forms
+      .where({ requester: ["owner", "respondent"], status: ["open"] })
+      .map((row) => row.formID),
+    ["plain", "raised", "twice"],
+  );
+  assert.deepEqual(store.forms.where({ requester: ["owner"], status: ["resolved"] }), []);
+  assert.deepEqual(store.forms.where({ requester: [] }), []);
+  assert.deepEqual(store.forms.values("route", { status: ["open"] }).sort(), [
+    "outsider",
+    "owner",
+    "requester",
+  ]);
+  assert.deepEqual(
+    store.forms.where({ status: ["open"], route: ["owner"] }).map((row) => row.formID),
+    ["plain", "raised"],
+  );
+  assert.deepEqual(store.forms.values("requester", {}).sort(), ["outsider", "owner", "respondent"]);
+  assert.deepEqual(store.forms.values("route", { requester: [] }), []);
+  assert.deepEqual(store.forms.where({ work: ["w1"] })[0]?.updatedAt, at);
+  const many = Array.from({ length: 40000 }, (_, i) => `o${i}`);
+  assert.equal(store.work.where({ owner: many }).length, 300);
+  assert.throws(() => store.work.where({ data: ["x"] } as never), /no indexed column data/);
+  assert.throws(() => store.work.values("cursor" as never, {}), /no indexed column cursor/);
+  const db = new DatabaseSync(file);
+  try {
+    const current =
+      "SELECT m.data FROM work m JOIN work_history h ON h.id=m.id AND h.revision=m.revision WHERE 1";
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN ${current} AND m.owner IN (SELECT value FROM json_each(?)) AND m.status IN (SELECT value FROM json_each(?)) ORDER BY m.cursor ASC`,
+      )
+      .all('["o1"]', '["open"]')
+      .map((row) => String(row.detail))
+      .join("; ");
+    assert.match(plan, /SEARCH m USING INDEX work_owner/);
+  } finally {
+    db.close();
+  }
 });

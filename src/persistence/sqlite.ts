@@ -1,12 +1,12 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { requireThat } from "../contracts/common.js";
 import type { HistoryEntry } from "../contracts/index.js";
-import type { RecordTable, Snapshot, WorkspaceStore } from "./index.js";
+import type { Filter, RecordTable, Snapshot, WorkspaceStore } from "./index.js";
 
 const MODULES = ["messages", "work", "forms", "status"] as const;
 /**
- * Step N upgrades a database at user_version N; 0 is a 0.4 database. Snapshots change in place and
- * history keeps every original event.
+ * Step N upgrades a database at user_version N; 0 is a 0.4 database or a new one, where the data
+ * steps find no rows. Snapshots change in place and history keeps every original event.
  */
 const UPGRADES: ((db: DatabaseSync) => void)[] = [
   // 0.5: Messages link no Work.
@@ -51,6 +51,31 @@ const UPGRADES: ((db: DatabaseSync) => void)[] = [
       update.run(JSON.stringify(ask), String(id));
     }
   },
+  // 0.6: indexed columns for the fields lists select by. A stored `blocked` is indexed as `active`,
+  // the status 0.6 reads it as, and an ask's route starts at its last raiser, else its asker.
+  (db) =>
+    db.exec(`
+      ALTER TABLE messages ADD COLUMN sender TEXT GENERATED ALWAYS AS (json_extract(data,'$.senderID')) VIRTUAL;
+      ALTER TABLE messages ADD COLUMN recipient TEXT GENERATED ALWAYS AS (json_extract(data,'$.recipientID')) VIRTUAL;
+      ALTER TABLE work ADD COLUMN owner TEXT GENERATED ALWAYS AS (json_extract(data,'$.ownerID')) VIRTUAL;
+      ALTER TABLE work ADD COLUMN requester TEXT GENERATED ALWAYS AS (json_extract(data,'$.requesterID')) VIRTUAL;
+      ALTER TABLE work ADD COLUMN status TEXT GENERATED ALWAYS AS (CASE json_extract(data,'$.status') WHEN 'blocked' THEN 'active' ELSE json_extract(data,'$.status') END) VIRTUAL;
+      ALTER TABLE work ADD COLUMN submission TEXT GENERATED ALWAYS AS (json_extract(data,'$.submission.submissionID')) VIRTUAL;
+      ALTER TABLE forms ADD COLUMN requester TEXT GENERATED ALWAYS AS (json_extract(data,'$.requesterID')) VIRTUAL;
+      ALTER TABLE forms ADD COLUMN status TEXT GENERATED ALWAYS AS (json_extract(data,'$.status')) VIRTUAL;
+      ALTER TABLE forms ADD COLUMN work TEXT GENERATED ALWAYS AS (json_extract(data,'$.workID')) VIRTUAL;
+      ALTER TABLE forms ADD COLUMN route TEXT GENERATED ALWAYS AS (COALESCE(json_extract(data,'$.raises[#-1].actorID'),json_extract(data,'$.requesterID'))) VIRTUAL;
+      CREATE INDEX messages_sender ON messages(sender);
+      CREATE INDEX messages_recipient ON messages(recipient);
+      CREATE INDEX work_owner ON work(owner);
+      CREATE INDEX work_requester ON work(requester);
+      CREATE INDEX work_status ON work(status);
+      CREATE INDEX work_submission ON work(submission);
+      CREATE INDEX forms_requester ON forms(requester);
+      CREATE INDEX forms_status ON forms(status);
+      CREATE INDEX forms_work ON forms(work);
+      CREATE INDEX forms_route ON forms(status,route);
+    `),
 ];
 /** A title from existing text: its first line, cut at a word boundary to 120 characters. */
 function headline(text: string): string {
@@ -76,9 +101,11 @@ export function openSqlite(path: string): WorkspaceStore {
           CREATE TABLE IF NOT EXISTS ${name}_history (id TEXT NOT NULL, revision INTEGER NOT NULL, cursor INTEGER NOT NULL UNIQUE, event TEXT NOT NULL, PRIMARY KEY (id, revision));
         `);
       }
-      if (existing) for (const upgrade of UPGRADES.slice(version)) upgrade(db);
+      for (const upgrade of UPGRADES.slice(version)) upgrade(db);
       db.exec(`PRAGMA user_version=${UPGRADES.length}`);
     });
+    // Index statistics let a filter on several columns use its most selective index.
+    db.exec("PRAGMA analysis_limit=1000; PRAGMA optimize=0x10002;");
   } catch (error) {
     db.close();
     throw error;
@@ -94,10 +121,37 @@ export function openSqlite(path: string): WorkspaceStore {
       throw error;
     }
   }
-  function table<T>(name: (typeof MODULES)[number]): RecordTable<T> {
+  function table<T, C extends string = never>(name: (typeof MODULES)[number]): RecordTable<T, C> {
     const current = `SELECT m.data,m.revision,m.cursor,json_extract(h.event,'$.at') AS updated_at FROM ${name} m JOIN ${name}_history h ON h.id=m.id AND h.revision=m.revision`;
     const select = db.prepare(`${current} WHERE m.id=?`);
-    const list = db.prepare(`${current} ORDER BY m.cursor ASC`);
+    const columns = new Set(
+      db
+        .prepare("SELECT name FROM pragma_table_xinfo(?) WHERE hidden IN (2,3)")
+        .all(name)
+        .map((row) => String(row.name)),
+    );
+    const indexed = (column: string) => {
+      if (!columns.has(column)) throw new Error(`${name} has no indexed column ${column}`);
+      return column;
+    };
+    const statements = new Map<string, StatementSync>();
+    const prepared = (sql: string) => {
+      const statement = statements.get(sql) ?? db.prepare(sql);
+      statements.set(sql, statement);
+      return statement;
+    };
+    /** Each filtered column's values are bound as one JSON array. */
+    const matching = (filter: Filter<C>) => {
+      const entries = Object.entries<readonly string[] | undefined>(filter).filter(
+        (entry): entry is [string, readonly string[]] => entry[1] !== undefined,
+      );
+      return {
+        sql: entries
+          .map(([column]) => ` AND m.${indexed(column)} IN (SELECT value FROM json_each(?))`)
+          .join(""),
+        values: entries.map(([, values]) => JSON.stringify(values)),
+      };
+    };
     const events = db.prepare(`SELECT event FROM ${name}_history WHERE id=? ORDER BY revision ASC`);
     const head = db.prepare(`SELECT COALESCE(MAX(cursor),0) AS head FROM ${name}_history`);
     const put = db.prepare(
@@ -121,7 +175,21 @@ export function openSqlite(path: string): WorkspaceStore {
       get,
       history: (id) => events.all(id).map((row) => JSON.parse(String(row.event))),
       head: latest,
-      all: () => list.all().map(decode),
+      where(filter) {
+        const { sql, values } = matching(filter);
+        return prepared(`${current} WHERE 1${sql} ORDER BY m.cursor ASC`)
+          .all(...values)
+          .map(decode);
+      },
+      values(column, filter) {
+        const { sql, values } = matching(filter);
+        const selected = indexed(column);
+        return prepared(
+          `SELECT DISTINCT m.${selected} AS value FROM ${name} m WHERE m.${selected} IS NOT NULL${sql}`,
+        )
+          .all(...values)
+          .map((row) => String(row.value));
+      },
       save(id, data, event, expectedRevision): Snapshot<T> {
         const current = get(id);
         requireThat(
