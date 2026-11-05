@@ -29,7 +29,6 @@ export function readThrough<T, C extends string>(
       return row && read(row);
     },
     where: (filter) => table.where(filter).map(read),
-    values: (column, filter) => table.values(column, filter),
     history: (id) => table.history(id),
     head: () => table.head(),
     save: (id, data, event, expectedRevision) => table.save(id, data, event, expectedRevision),
@@ -103,24 +102,6 @@ export function traverse<T, C extends string>(
     next: last && rows.length > items.length ? token(scope, last.cursor) : null,
     actors: names(actors, items.flatMap(mentions)),
   };
-}
-/**
- * A filter whose subtree criteria are resolved to the Actors each party column holds among the
- * rows the filter keeps: one membership read per Actor rather than per row.
- */
-export function subtrees<C extends string>(
-  actors: ActorsClient,
-  table: RecordTable<unknown, C>,
-  filter: Filter<C>,
-  within: { [K in C]?: string | undefined },
-): Filter<C> {
-  const resolved: Filter<C> = { ...filter };
-  for (const [column, anchor] of Object.entries<string | undefined>(within))
-    if (anchor !== undefined)
-      resolved[column as C] = table
-        .values(column as C, filter)
-        .filter((actorID) => actors.within(actorID, anchor));
-  return resolved;
 }
 /** Names of the Actors a page mentions; Actors the caller can't see are left out. */
 export function names(actors: ActorsClient, ids: Iterable<string | undefined>) {

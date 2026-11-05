@@ -1,9 +1,9 @@
 /**
- * An ask's rules and writes: its fields, answers, raises, route and closing. Asks are stored in
- * their own rows of the forms table; callers run each write inside the store's transaction.
+ * An ask's rules and writes: its fields, answers, route and closing. Asks are stored in their own
+ * rows of the forms table; callers run each write inside the store's transaction.
  */
 import { randomUUID } from "node:crypto";
-import { type ActorsClient, routedStandIn, standIn } from "../actors/index.js";
+import { type ActorsClient, standIn } from "../actors/index.js";
 import {
   type AskClose,
   type AskInput,
@@ -12,20 +12,26 @@ import {
   type FormState,
   type Output,
   requireThat,
+  type WorkState,
 } from "../contracts/index.js";
 import type { RecordTable, Snapshot } from "../persistence/index.js";
 import { now, published, readThrough, recorded, stateOf } from "../records.js";
 
-type Asks = RecordTable<FormState, "requester" | "status" | "work" | "route">;
+type Asks = RecordTable<FormState, "requester" | "status" | "work">;
+type Requesters = Pick<RecordTable<WorkState>, "get">;
 
 /**
- * Asks as this package reads them: a `cause` stored before asks lived on Work is left unread, and
- * an ask stored then has no raises.
+ * Asks as this package reads them: a `cause` stored before asks lived on Work, and the `raises`
+ * earlier builds stored, are left unread.
  */
 export function asksAsRead(forms: Asks): Asks {
   return readThrough(forms, (row) => {
-    const { cause: _cause, ...ask } = row as Snapshot<FormState> & { cause?: string };
-    return { ...ask, raises: ask.raises ?? [] };
+    const {
+      cause: _cause,
+      raises: _raises,
+      ...ask
+    } = row as Snapshot<FormState> & { cause?: string; raises?: unknown };
+    return ask;
   });
 }
 export function checkFields(fields: Field[]) {
@@ -93,13 +99,12 @@ export function created(
         status: "open",
         createdAt: at,
         responses: {},
-        raises: [],
       },
       { actorID: caller, at, action: "created", detail: { ...input, workID: ticketID } },
     ),
   );
 }
-/** The asker, or its nearest open manager once it is closed, resolves or cancels its open ask. */
+/** The asker, or the person once the asker is closed, resolves or cancels its open ask. */
 export function closed(
   actors: ActorsClient,
   forms: Asks,
@@ -123,10 +128,14 @@ export function closed(
     ),
   );
 }
-/** A complete answer set by one responder; only the asker's strict managers answer an approval. */
+/**
+ * A complete answer set by one responder; only the Actor an approval is routed to answers it, never
+ * its asker.
+ */
 export function responded(
   actors: ActorsClient,
   forms: Asks,
+  work: Requesters,
   row: Snapshot<FormState>,
   caller: string,
   answers: Record<string, string>,
@@ -134,9 +143,9 @@ export function responded(
 ): Form {
   requireThat(row.status === "open", "conflict", "the ask is closed");
   requireThat(
-    !row.approval || (caller !== row.requesterID && actors.within(row.requesterID, caller)),
+    !row.approval || (caller !== row.requesterID && router(actors, work)(row) === caller),
     "forbidden",
-    "only the asker's managers answer an approval",
+    "only the Actor an approval is routed to answers it, never its asker",
   );
   for (const name of Object.keys(answers))
     requireThat(
@@ -174,53 +183,30 @@ export function responded(
     ),
   );
 }
-/** The Actor an open ask is routed to passes it one manager up; a raise never resolves it. */
-export function raised(
-  actors: ActorsClient,
-  forms: Asks,
-  row: Snapshot<FormState>,
-  caller: string,
-): Form {
-  requireThat(row.status === "open", "conflict", "the ask is closed");
-  requireThat(
-    routeOf(actors, row) === caller && above(actors, caller) !== null,
-    "forbidden",
-    "only the Actor the ask is routed to raises it, to an open manager above it",
-  );
-  const raise = { actorID: caller, at: now() };
-  return published(
-    forms.save(
-      row.formID,
-      { ...stateOf(published(row)), raises: [...row.raises, raise] },
-      { actorID: caller, at: raise.at, action: "raised", detail: raise },
-      row.revision,
-    ),
-  );
-}
 /**
- * Where an Actor's asks route: its manager, or that manager's nearest open manager. Raising walks it
- * strictly; only the routed read walks past Actors the caller can't see.
+ * The Actor each open ask is routed to: its Work's requester, or the person when the asker requested
+ * the Work itself or the ask names no Work. A closed requester's asks go to the person. A router
+ * reads each Work's requester, each stand-in and the person once. Rights use the strict stand-in;
+ * only the hosts' routed read counts an Actor the caller can't see as closed.
  */
-function above(actors: ActorsClient, actorID: string, through = standIn) {
-  const manager = actors.manager(actorID);
-  return manager === null ? null : through(actors, manager);
+export function router(actors: ActorsClient, work: Requesters, through = standIn) {
+  const requesterOf = remembered((workID) => work.get(workID)?.requesterID);
+  const standInOf = remembered((actorID) => through(actors, actorID));
+  let person: string | undefined;
+  return (row: FormState): string => {
+    const requester = row.workID === undefined ? undefined : requesterOf(row.workID);
+    if (requester !== undefined && requester !== row.requesterID) return standInOf(requester);
+    person ??= actors.person();
+    return person;
+  };
 }
-/** The Actor an open ask is routed to, from its last raiser or else its asker; null for none. */
-export function routeOf(actors: ActorsClient, row: FormState) {
-  return row.status === "open"
-    ? above(actors, row.raises.at(-1)?.actorID ?? row.requesterID)
-    : null;
-}
-/** The route origins of open asks, among those the filter keeps, that route to an Actor. */
-export function routedTo(
-  actors: ActorsClient,
-  forms: Asks,
-  actorID: string,
-  requester: string[] | undefined,
-) {
-  return forms
-    .values("route", { status: ["open"], requester })
-    .filter((origin) => above(actors, origin, routedStandIn) === actorID);
+/** Reads each key once for the life of the returned function. */
+function remembered<V>(read: (key: string) => V) {
+  const values = new Map<string, V>();
+  return (key: string): V => {
+    if (!values.has(key)) values.set(key, read(key));
+    return values.get(key) as V;
+  };
 }
 const CANCELLED = {
   submitted: "Cancelled with the Work's submission.",
@@ -245,9 +231,5 @@ export function cancelOpen(
     );
   }
 }
-/** The Actors an ask mentions: its asker, responders and raisers. */
-export const mentioned = (row: FormState) => [
-  row.requesterID,
-  ...Object.keys(row.responses),
-  ...row.raises.map((raise) => raise.actorID),
-];
+/** The Actors an ask mentions: its asker and responders. */
+export const mentioned = (row: FormState) => [row.requesterID, ...Object.keys(row.responses)];

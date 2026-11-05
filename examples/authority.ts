@@ -41,25 +41,10 @@ export function fixtureAuthority() {
       },
     ],
   ]);
-  const managers = new Map<string, string | null>([
-    ["requester", null],
-    ["owner", "requester"],
-    ["respondent", "owner"],
-    ["outsider", "requester"],
-  ]);
+  // requester is the person, the Actor the host names as its user.
   const authority: ActorAuthority = {
     get: (_caller, id) => rows.get(id),
-    manager: (_caller, actorID) => managers.get(actorID) ?? null,
-    within: (_caller, actorID, ancestorID) => {
-      if (!rows.has(ancestorID)) return false;
-      for (
-        let at: string | null | undefined = actorID;
-        at != null && rows.has(at);
-        at = managers.get(at)
-      )
-        if (at === ancestorID) return true;
-      return false;
-    },
+    person: () => "requester",
   };
-  return { authority, rows, managers };
+  return { authority, rows };
 }

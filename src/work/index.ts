@@ -1,6 +1,6 @@
 /** Work, the unit of progress, and its asks: completed on submit or by its requester's answer. */
 import { randomUUID } from "node:crypto";
-import { type ActorsClient, activeActor, standIn } from "../actors/index.js";
+import { type ActorsClient, activeActor, routedStandIn, standIn } from "../actors/index.js";
 import {
   AskQuery,
   type Form,
@@ -16,16 +16,7 @@ import {
   type WorkState,
 } from "../contracts/index.js";
 import type { RecordTable, Snapshot, WorkspaceStore } from "../persistence/index.js";
-import {
-  names,
-  now,
-  published,
-  readThrough,
-  recorded,
-  stateOf,
-  subtrees,
-  traverse,
-} from "../records.js";
+import { names, now, published, readThrough, recorded, stateOf, traverse } from "../records.js";
 import {
   asksAsRead,
   asksOn,
@@ -34,9 +25,8 @@ import {
   closed,
   created,
   mentioned,
-  raised,
   responded,
-  routedTo,
+  router,
 } from "./asks.js";
 
 export interface WorkClient {
@@ -65,7 +55,7 @@ export function createWork(
       "conflict",
       "work is frozen for review, accepted or cancelled",
     );
-  /** The requester's rights, which pass to its nearest open manager once it is closed. */
+  /** The requester's rights, which pass to the person once it is closed. */
   const requester = (row: WorkState, caller: string) => standIn(actors, row.requesterID) === caller;
   /** What Work waits on must exist; text needs no check. */
   function waitable(waitsOn: WaitsOn | null | undefined) {
@@ -140,7 +130,6 @@ export function createWork(
   }
   function ask(ticketID: string, input: NonNullable<Update["ask"]>, caller: string): Form {
     checkFields(input.fields);
-    requireThat(actors.manager(caller) !== null, "forbidden", "the root doesn't ask");
     return store.transaction(() => {
       const work = recorded(table, ticketID);
       requireThat(work.ownerID === caller, "forbidden", "only the Work's owner asks on it");
@@ -150,7 +139,6 @@ export function createWork(
   }
   function answerSubmission(request: Answer, caller: string): Work {
     const row = submitted(table, request.askID, request.ticketID);
-    requireThat(!request.raise, "invalid_input", "a submission can't be raised");
     const { verdict } = parse(SubmissionAnswer, request).answers;
     requireThat(
       verdict === "accepted" || request.note !== undefined,
@@ -231,17 +219,11 @@ export function createWork(
         table,
         query,
         ["work", filter],
-        () =>
-          subtrees(
-            actors,
-            table,
-            {
-              owner: query.ownerID === undefined ? undefined : [query.ownerID],
-              requester: query.requesterID === undefined ? undefined : [query.requesterID].flat(),
-              status: query.status,
-            },
-            { owner: query.ownerWithin, requester: query.requesterWithin },
-          ),
+        () => ({
+          owner: query.ownerID === undefined ? undefined : [query.ownerID].flat(),
+          requester: query.requesterID === undefined ? undefined : [query.requesterID].flat(),
+          status: query.status,
+        }),
         (row) =>
           (query.waitsOnActorID === undefined || waitedOn(row) === query.waitsOnActorID) &&
           (query.updatedSince === undefined || row.updatedAt >= query.updatedSince),
@@ -307,34 +289,31 @@ export function createWork(
           "not_found",
           "record not found",
         );
-        return request.raise
-          ? raised(actors, forms, asked, caller)
-          : responded(actors, forms, asked, caller, request.answers ?? {}, request.note);
+        return responded(actors, forms, table, asked, caller, request.answers, request.note);
       });
     },
     asks(input = {}) {
       const query = parse(AskQuery, input);
       actors.get();
       const { after: _after, limit: _limit, ...filter } = query;
+      const routed = query.routedTo;
+      const route = router(actors, table, routedStandIn);
       return traverse(
         actors,
         forms,
         query,
         ["asks", filter],
-        () => {
-          const requester = query.requesterID === undefined ? undefined : [query.requesterID];
-          const routed = query.routedTo;
-          return {
-            requester,
-            // Only an open ask has a route.
-            status:
-              routed === undefined
-                ? query.status
-                : (query.status ?? ["open"]).filter((status) => status === "open"),
-            route: routed === undefined ? undefined : routedTo(actors, forms, routed, requester),
-          };
-        },
-        (row) => query.answeredBy === undefined || Object.hasOwn(row.responses, query.answeredBy),
+        () => ({
+          requester: query.requesterID === undefined ? undefined : [query.requesterID],
+          // Only an open ask has a route.
+          status:
+            routed === undefined
+              ? query.status
+              : (query.status ?? ["open"]).filter((status) => status === "open"),
+        }),
+        (row) =>
+          (query.answeredBy === undefined || Object.hasOwn(row.responses, query.answeredBy)) &&
+          (routed === undefined || route(row) === routed),
         mentioned,
       );
     },
