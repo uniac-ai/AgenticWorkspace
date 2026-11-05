@@ -11,9 +11,9 @@ Bind the actual admitted Actor ID to a canonical synchronous `ActorAuthority` an
 
 The Workspace uses the person in two ways. An ask on Work its asker requested itself, or on no Work, goes to the person. A closed Actor's requester rights, its asks' closing and the asks routed to it pass to the person. The Workspace stores no Actor rows, relationships or person.
 
-## Changes since 0.0.1
+## Changes in 0.0.2
 
-This build changes the public contracts from 0.0.1 (commit 26fd0ee) and keeps storage version 4, so a 0.0.1 store opens unchanged and needs no upgrade.
+0.0.2 changes the public contracts from 0.0.1 (commit 26fd0ee) and keeps storage version 4, so a 0.0.1 store opens unchanged and needs no upgrade.
 
 - **`ActorAuthority` is `{get, person}`.** `within` and `manager` are removed: an object literal typed `ActorAuthority` that still declares either no longer compiles, and on any other host object they are never called. `ActorsClient` drops `within` and `manager` and gains `person()`.
 - **Routing.** An ask goes to its Work's requester. When its asker requested the Work itself, or it names no Work, it goes to the person. A closed requester's asks go to the person. `WorkClient.asks({routedTo})` follows this, counting a requester the caller can't see as closed, and reads each open ask the other filters keep.
