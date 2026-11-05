@@ -2,7 +2,7 @@
 
 Durable pair conversations, Work and asks, shared within the organization by active admitted Actor clients. Three separate clients expose identity, Messages, and Work tracking with its asks. Execution and viewer MCP servers share their records and authority rules. Work and ask list filters select matching records before pagination; business write roles remain unchanged.
 
-This package composes with Hub's canonical Actor authority and trusted admission, which names the person, as described in [Hub integration](docs/hub-integration.md). [Changes since 0.0.1](docs/hub-integration.md#changes-since-001) lists what changes for hosts. The runnable example uses model-free fixture identities; it is not production admission.
+This package composes with Hub's canonical Actor authority and trusted admission, which names the person, as described in [Hub integration](docs/hub-integration.md). [Changes in 0.0.2](docs/hub-integration.md#changes-in-002) lists what changes for hosts. The runnable example uses model-free fixture identities; it is not production admission.
 
 ## Run
 

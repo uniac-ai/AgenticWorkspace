@@ -205,7 +205,7 @@ try {
       readFileSync(join(dir, "node_modules/@uniac/agentic-workspace/package.json"), "utf8"),
     );
     assert.equal(installed.private, true);
-    assert.equal(installed.version, "0.0.1");
+    assert.equal(installed.version, "0.0.2");
     assert.equal(Object.keys(installed.exports).length, 7);
   } finally {
     rmSync(dir, { recursive: true, force: true });
