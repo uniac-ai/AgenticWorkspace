@@ -25,15 +25,13 @@ export type MessageState = z.infer<typeof MessageState>;
 const messageID = z.strictObject({ messageID: ID });
 export const MessageContracts = {
   message_send: contract(
-    "report",
     "Send a message to another Actor; it joins the pair's conversation.",
     z.strictObject({ recipientID: ID, text: Text }),
     Message,
     true,
   ),
-  message_get: contract("team", "Read a message.", messageID, Message),
+  message_get: contract("Read a message.", messageID, Message),
   message_list: contract(
-    "report",
     "Name exactly one of between, counterpartyID or of. between (two Actors) or counterpartyID (the caller and one Actor) reads one conversation ascending: forward after a position or seq, or the newest window before latest/older. of lists an Actor's conversations, newest first, each as its latest message, continuing only after next.",
     z
       .strictObject({

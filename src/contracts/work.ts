@@ -81,18 +81,15 @@ const ticketID = z.strictObject({ ticketID: ID });
 const mutation = ticketID.extend({ expectedRevision: Revision.optional() });
 /** Every supplied filter must match; the page limit applies after them. */
 const filter = z.strictObject({
-  ownerID: ID.optional(),
+  ownerID: OneOrMany.optional(),
   requesterID: OneOrMany.optional(),
   waitsOnActorID: ID.optional(),
-  ownerWithin: ID.optional(),
-  requesterWithin: ID.optional(),
   status: z.array(WorkStatus).min(1).optional(),
   updatedSince: z.iso.datetime().optional(),
   order: z.literal("recent").optional(),
 });
 export const WorkContracts = {
   work_create: contract(
-    "report",
     "Create Work; the caller requests it and owns it unless ownerID names another Actor.",
     z.strictObject({
       title: Title,
@@ -105,7 +102,6 @@ export const WorkContracts = {
     true,
   ),
   work_get: contract(
-    "report",
     "Read Work with all its asks, by ticketID, or by askID: the Work an ask (or the current submission) is on, or an older ask with no Work alone. History only when asked, for the Work and each ask.",
     z
       .strictObject({
@@ -124,13 +120,11 @@ export const WorkContracts = {
     z.union([Work, Form]),
   ),
   work_list: contract(
-    "report",
     "List shared work matching every filter, by update order or most recent first; each item carries its open asks.",
     filter.extend({ after: Next.optional(), limit: Limit }),
     listOf(Work),
   ),
   work_update: contract(
-    "report",
     "One of three forms, each in a call of its own. Edits: the owner edits title, progress, open/active status, links and waitsOn (null clears it); the requester edits goal or owner, or cancels, with expectedRevision. Progress is a paragraph, then optionally a Markdown task list of steps: `- [x]` done, `- [ ]` not done. {ticketID, ask}: the owner asks on its Work and gets the ask back; mark approval when the answer can't be undone. {close}: the asker resolves or cancels its open ask, recording why.",
     z
       .strictObject({
@@ -168,28 +162,19 @@ export const WorkContracts = {
     true,
   ),
   work_submit: contract(
-    "report",
     "Owner submits the result; Work the owner requested itself completes, other Work waits for its requester's answer.",
     mutation.extend({ result: Text, evidence: z.array(Text).max(100).default([]) }),
     Work,
     true,
   ),
   work_answer: contract(
-    "team",
-    "Answer an ask by its askID: answers for its fields and an optional note. Any Actor answers; only the asker's managers answer an approval; the first answer resolves the ask unless it collects. raise: true, by the Actor the ask is routed to, passes it one manager up. Or answer the Work's current submission by its ID: answers {verdict: accepted or changes_requested}, the note as the comment, which requesting changes needs; only its requester answers, or its nearest open manager once it is closed.",
-    z
-      .strictObject({
-        askID: ID,
-        ticketID: ID.optional(),
-        answers: z.record(z.string(), z.string().max(20000)).optional(),
-        note: Text.optional(),
-        raise: z.literal(true).optional(),
-      })
-      .refine(
-        (v) =>
-          v.raise ? v.answers === undefined && v.note === undefined : v.answers !== undefined,
-        { error: "give answers, or raise: true with no answers or note" },
-      ),
+    "Answer an ask by its askID: answers for its fields and an optional note. Any Actor answers; the first answer resolves the ask unless it collects. An approval is answered only by the Actor it is routed to, never its asker: the Work's requester, or the person when the asker requested the Work itself or once the requester is closed. Or answer the Work's current submission by its ID: answers {verdict: accepted or changes_requested}, the note as the comment, which requesting changes needs; only its requester answers, or the person once it is closed.",
+    z.strictObject({
+      askID: ID,
+      ticketID: ID.optional(),
+      answers: z.record(z.string(), z.string().max(20000)),
+      note: Text.optional(),
+    }),
     z.union([Work, Form]),
     true,
   ),

@@ -52,21 +52,17 @@ const peer: Actor = {...actor,actorID:'peer',name:'Peer'};
 const observer: Actor = {...actor,actorID:'observer',name:'Observer'};
 const authority: ActorAuthority = {
   get: (_caller,id) => [actor,peer,observer].find(row=>row.actorID===id),
-  manager: (_caller,id) => id==='peer' || id==='observer' ? 'self' : null,
-  within: (caller,id,ancestor) => {
-    assert.equal(caller,'observer');
-    return [actor,peer,observer].some(row=>row.actorID===id) && (ancestor===id || ancestor==='self');
-  },
+  person: () => 'self',
 };
-// @ts-expect-error Every host must supply canonical synchronous membership.
-const incompleteAuthority: ActorAuthority = {get:authority.get,manager:authority.manager};
-assert.ok(incompleteAuthority);
-// @ts-expect-error Every host must supply each Actor's retained manager.
-const managerless: ActorAuthority = {get:authority.get,within:authority.within};
-assert.ok(managerless);
-// @ts-expect-error Canonical membership must return a synchronous boolean.
-const asynchronousAuthority: ActorAuthority = {...authority,within:async()=>true};
+// @ts-expect-error Every host must name the person.
+const personless: ActorAuthority = {get:authority.get};
+assert.ok(personless);
+// @ts-expect-error The person is named synchronously.
+const asynchronousAuthority: ActorAuthority = {...authority,person:async()=>'self'};
 assert.ok(asynchronousAuthority);
+// @ts-expect-error Hosts supply no managers or membership.
+const tree: ActorAuthority = {get:authority.get,person:authority.person,manager:()=>null};
+assert.ok(tree);
 try {
   createActors({...authority,get:()=>classifiedActor},'self').get();
   throw new Error('Actor client accepted kind');
@@ -114,7 +110,7 @@ try {
   }
   publicTypes(direct);
   const ticket = Work.parse(work.create({title:'Consume exported clients',ownerID:'self'}));
-  // The root, self, doesn't ask; its report peer asks on Work it owns.
+  // peer asks on Work it requested itself, so its asks go to the person, self.
   const peerWork = createWork(createActors(authority,'peer'),store);
   const peerTicket = Work.parse(peerWork.create({title:'Peer work'}));
   const ask = (input: object) => Form.parse(peerWork.update({ticketID:peerTicket.ticketID,ask:input as never}));
@@ -126,11 +122,10 @@ try {
   const pending = ask({title:'Optional',fields:[{name:'answer',label:'Optional',required:false}]});
   const approval = ask({title:'Approve?',approval:true,fields:[{name:'answer',label:'Approve?',required:true}]});
   const clients = bindWorkspace(authority,store,'observer');
-  assert.equal(clients.actors.within('peer','self'),true);
-  assert.equal(clients.actors.within('self','peer'),false);
-  assert.deepEqual(clients.work.list({ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:['open']}).items,[{...ticket,asks:[]}]);
-  assert.deepEqual(clients.work.list({ownerWithin:'observer'}).items,[]);
-  assert.deepEqual(clients.work.list({ownerWithin:'peer'}).items.map(item=>item.asks?.length),[2]);
+  assert.equal(clients.actors.person(),'self');
+  assert.deepEqual(clients.work.list({ownerID:['self','observer'],requesterID:'self',status:['open']}).items,[{...ticket,asks:[]}]);
+  assert.deepEqual(clients.work.list({ownerID:'observer'}).items,[]);
+  assert.deepEqual(clients.work.list({ownerID:'peer'}).items.map(item=>item.asks?.length),[2]);
   assert.deepEqual(clients.work.asks({requesterID:'peer',status:['open']}).items,[pending,approval]);
   assert.deepEqual(clients.work.asks({routedTo:'self'}).items,[pending,approval]);
   assert.deepEqual(clients.work.asks({routedTo:'peer'}).items,[]);
@@ -145,7 +140,7 @@ try {
       assert.equal(tools.find(tool=>tool.name==='work_get')?.outputSchema?.type,'object');
       const formRead = await client.callTool({name:'work_get',arguments:{askID:form.formID}});
       assert.deepEqual((formRead.structuredContent as {asks:unknown[]}).asks,[closed,pending,approval]);
-      const workRead = await client.callTool({name:'work_list',arguments:{ownerID:'self',requesterID:'self',ownerWithin:'self',requesterWithin:'self',status:['open'],limit:1}});
+      const workRead = await client.callTool({name:'work_list',arguments:{ownerID:['self'],requesterID:'self',status:['open'],limit:1}});
       assert.deepEqual((workRead.structuredContent as {items:unknown[]}).items,[{...ticket,asks:[]}]);
       if (purpose==='execution') {
         const denied = await client.callTool({name:'work_answer',arguments:{askID:approval.formID,answers:{answer:'yes'}}});

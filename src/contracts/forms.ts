@@ -16,8 +16,6 @@ export const Response = z.strictObject({
   note: Text.optional(),
   at: z.iso.datetime(),
 });
-/** Who passed an ask up, and when; a raise names no destination. */
-export const Raise = z.strictObject({ actorID: ID, at: z.iso.datetime() });
 export const AskStatus = z.enum(["open", "resolved", "cancelled"]);
 /**
  * An ask, part of the Work its asker owns: open to any responder except where approval limits it.
@@ -37,7 +35,6 @@ export const FormState = z.strictObject({
   status: AskStatus,
   createdAt: z.iso.datetime(),
   responses: z.record(ID, Response),
-  raises: z.array(Raise),
   resolution: z
     .strictObject({
       text: Text,

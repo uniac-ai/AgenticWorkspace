@@ -132,7 +132,9 @@ test("SDK execution/viewer discovery and all 9 calls share records and enforce d
   const changed = (await call<Work>(viewer, "work_get", { askID: form.formID })).asks?.[0];
   assert.deepEqual(changed?.responses.outsider?.answers, { answer: "yes" });
   assert.equal(changed?.responses.outsider?.note, "Over MCP");
-  await refused(outsider, "work_list", { ownerWithin: 42 }, "invalid_input");
+  await refused(outsider, "work_list", { ownerID: 42 }, "invalid_input");
+  for (const removed of ["ownerWithin", "requesterWithin"])
+    await refused(outsider, "work_list", { [removed]: "owner" }, "invalid_input");
   const updateSchema = tools.find((tool) => tool.name === "work_update")?.inputSchema;
   assert.equal(updateSchema?.type, "object");
   for (const form of ["ask", "close"])
@@ -181,10 +183,8 @@ test("SDK execution/viewer discovery and all 9 calls share records and enforce d
   assert.equal(
     (
       await call<List<Work>>(outsider, "work_list", {
-        ownerID: "owner",
+        ownerID: ["owner", "respondent"],
         requesterID: "requester",
-        ownerWithin: "owner",
-        requesterWithin: "requester",
         status: ["accepted"],
         limit: 1,
       })
@@ -238,17 +238,25 @@ test("SDK execution/viewer discovery and all 9 calls share records and enforce d
 test("SDK boundary sanitizes unexpected failures and checks revoked caller", async (t) => {
   const store = openSqlite(":memory:");
   const fixture = fixtureAuthority();
-  const clients = bindWorkspace(
-    {
-      ...fixture.authority,
-      within: () => {
-        throw new Error("membership-credential-sentinel");
-      },
+  const authority = {
+    ...fixture.authority,
+    person: () => {
+      throw new Error("person-credential-sentinel");
     },
-    store,
-    "requester",
-  );
-  clients.work.create({ title: "Membership failure fixture", ownerID: "owner" });
+  };
+  const clients = bindWorkspace(authority, store, "requester");
+  // owner asks an approval on Work it requested itself, so the approval routes to the person.
+  const owner = bindWorkspace(authority, store, "owner").work;
+  const held = owner.create({ title: "Person failure fixture" });
+  const approval = owner.update({
+    ticketID: held.ticketID,
+    ask: {
+      title: "Approve?",
+      approval: true,
+      fields: [{ name: "ok", label: "OK?", required: true }],
+    },
+  });
+  assert.ok("formID" in approval);
   const server = createMcpServer(
     {
       ...clients,
@@ -288,13 +296,11 @@ test("SDK boundary sanitizes unexpected failures and checks revoked caller", asy
     false,
   );
   assert.equal(JSON.stringify(recentFailure).includes("counterpartyID"), false);
-  const selection = await client.callTool({
-    name: "work_list",
-    arguments: { ownerWithin: "owner" },
-  });
-  assert.equal(JSON.stringify(selection).includes("membership-credential-sentinel"), false);
-  assert.equal(selection.isError, true);
-  await refused(client, "work_list", { ownerWithin: "owner" }, "internal_error");
+  const answer = { askID: approval.formID, answers: { ok: "yes" } };
+  const answering = await client.callTool({ name: "work_answer", arguments: answer });
+  assert.equal(JSON.stringify(answering).includes("person-credential-sentinel"), false);
+  assert.equal(answering.isError, true);
+  await refused(client, "work_answer", answer, "internal_error");
   const actor = fixture.rows.get("requester");
   assert.ok(actor);
   fixture.rows.set("requester", { ...actor, state: "closed" });

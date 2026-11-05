@@ -158,7 +158,7 @@ test("a version 0 database upgrades once in place and keeps every original event
       const form = owner.work.get({ askID: "form" });
       assert.ok("formID" in form);
       assert.equal(Object.hasOwn(form, "respondentIDs"), false);
-      assert.deepEqual(form.raises, []);
+      assert.equal(Object.hasOwn(form, "raises"), false);
       assert.equal(form.title, "Which?");
       assert.equal(form.fields[0]?.label, "Which?");
       assert.deepEqual(
@@ -296,7 +296,6 @@ test("a version 3 database upgrades to version 4 by indexing fields, rewriting n
       store.work.where({ status: ["active"] }).map((row) => [row.ticketID, row.status]),
       [["held", "blocked"]],
     );
-    assert.deepEqual(store.forms.values("route", { work: ["held"] }), ["owner"]);
     const owner = bindWorkspace(fixtureAuthority().authority, store, "owner").work;
     assert.deepEqual(
       owner.list({ status: ["active"] }).items.map((row) => [row.ticketID, row.status]),
@@ -365,7 +364,6 @@ test("indexed lookups select current snapshots by column values, through their i
         status: "open",
         createdAt: at,
         responses: {},
-        raises: [],
         ...extra,
       },
       event,
@@ -373,15 +371,10 @@ test("indexed lookups select current snapshots by column values, through their i
   store.transaction(() => {
     for (let i = 0; i < 300; i++) work(`w${i}`, `o${i % 100}`, i % 3 === 0 ? "accepted" : "open");
     ask("plain", "owner", { workID: "w1" });
-    // A raise is how an ask passed up is stored; its route starts at the raiser.
-    ask("raised", "respondent", { raises: [{ actorID: "owner", at }] });
+    ask("other", "respondent");
     ask("closed", "outsider", { status: "resolved" });
-    ask("unraised", "outsider", { raises: [] });
-    const raises = [
-      { actorID: "owner", at },
-      { actorID: "requester", at },
-    ];
-    ask("twice", "respondent", { raises });
+    ask("open", "outsider");
+    ask("second", "respondent");
   });
   store.close();
   store = openSqlite(file);
@@ -397,30 +390,18 @@ test("indexed lookups select current snapshots by column values, through their i
     store.forms
       .where({ requester: ["owner", "respondent"], status: ["open"] })
       .map((row) => row.formID),
-    ["plain", "raised", "twice"],
+    ["plain", "other", "second"],
   );
   assert.deepEqual(store.forms.where({ requester: ["owner"], status: ["resolved"] }), []);
   assert.deepEqual(store.forms.where({ requester: [] }), []);
-  assert.deepEqual(store.forms.values("route", { status: ["open"] }).sort(), [
-    "outsider",
-    "owner",
-    "requester",
-  ]);
   assert.deepEqual(
-    store.forms.where({ status: ["open"], route: ["owner"] }).map((row) => row.formID),
-    ["plain", "raised"],
+    store.forms.where({ status: ["open"], requester: ["outsider"] }).map((row) => row.formID),
+    ["open"],
   );
-  assert.deepEqual(store.forms.values("requester", {}).sort(), ["outsider", "owner", "respondent"]);
-  assert.deepEqual(store.forms.values("route", { requester: [] }), []);
   assert.deepEqual(store.forms.where({ work: ["w1"] })[0]?.updatedAt, at);
-  assert.deepEqual(
-    store.work.values("owner", { status: ["accepted"] }).sort(),
-    [...new Set(Array.from({ length: 100 }, (_, i) => `o${(i * 3) % 100}`))].sort(),
-  );
   const many = Array.from({ length: 40000 }, (_, i) => `o${i}`);
   assert.equal(store.work.where({ owner: many }).length, 300);
   assert.throws(() => store.work.where({ data: ["x"] } as never), /no indexed column data/);
-  assert.throws(() => store.work.values("cursor" as never, {}), /no indexed column cursor/);
   const db = new DatabaseSync(file);
   try {
     const current =
@@ -434,16 +415,6 @@ test("indexed lookups select current snapshots by column values, through their i
       .join("; ");
     // One range of the owner's index, with no index statistics needed to choose it.
     assert.match(plan, /SEARCH m USING INDEX work_owner \(owner=\? AND status=\?\)/);
-    // A party's distinct values under a status filter, as a subtree filter reads them, come from
-    // the party's own index rather than the status index.
-    const values = db
-      .prepare(
-        "EXPLAIN QUERY PLAN SELECT DISTINCT m.owner AS value FROM work m INDEXED BY work_owner WHERE m.owner IS NOT NULL AND m.status IN (SELECT value FROM json_each(?))",
-      )
-      .all('["open"]')
-      .map((row) => String(row.detail))
-      .join("; ");
-    assert.match(values, /SEARCH m USING (COVERING )?INDEX work_owner/);
   } finally {
     db.close();
   }

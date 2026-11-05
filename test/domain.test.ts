@@ -39,7 +39,7 @@ function next(page: { next: string | null }): string {
 function fixture(t: { after(callback: () => void): void }) {
   const dir = mkdtempSync(join(tmpdir(), "workspace-domain-"));
   const file = join(dir, "records.sqlite");
-  const { authority, rows, managers } = fixtureAuthority();
+  const { authority, rows } = fixtureAuthority();
   let store = openSqlite(file);
   t.after(() => {
     store.close();
@@ -47,7 +47,6 @@ function fixture(t: { after(callback: () => void): void }) {
   });
   return {
     rows,
-    managers,
     authority,
     file,
     get store() {
@@ -99,7 +98,7 @@ for (const requesterClient of ["human", "software"] as const)
         }),
       );
       assert.equal(form.workID, ticket.ticketID);
-      assert.deepEqual(form.raises, []);
+      assert.equal(Object.hasOwn(form, "raises"), false);
       assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
       const shared = work(respondent.work.get({ askID: form.formID }));
       assert.deepEqual(shared.asks, [form]);
@@ -290,10 +289,9 @@ test("an ask sits on Work its asker owns, and an older ask reads where it was le
     fields: [{ name: "answer", label: "Which?", required: true }],
   };
   const ticket = requester.work.create({ title: "Linked context", ownerID: "owner" });
-  const own = requester.work.create({ title: "The root's own" });
+  const own = requester.work.create({ title: "The person's own" });
   for (const [by, ticketID, code] of [
     [outsider, ticket.ticketID, "forbidden"],
-    [requester, own.ticketID, "forbidden"],
     [owner, "absent", "not_found"],
   ] as const)
     assert.throws(() => by.work.update({ ticketID, ask: question }), rejects(code));
@@ -322,8 +320,8 @@ test("an ask sits on Work its asker owns, and an older ask reads where it was le
   const linked = ask(owner.work.update({ ticketID: ticket.ticketID, ask: question }));
   assert.equal(requester.work.get({ ticketID: ticket.ticketID }).revision, ticket.revision);
   assert.deepEqual(work(outsider.work.get({ askID: linked.formID })).asks, [linked]);
-  // Asks stored before asks lived on Work: one with no Work and a cause, and one by another Actor
-  // on this Work.
+  // Asks stored before asks lived on Work: one with no Work, a cause and the raises earlier builds
+  // stored, and two by an Actor other than the Work's owner.
   const at = new Date().toISOString();
   const stored = (formID: string, requesterID: string, extra: object) => {
     const row = {
@@ -343,11 +341,14 @@ test("an ask sits on Work its asker owns, and an older ask reads where it was le
       f.store.forms.save(formID, row, { actorID: requesterID, at, action: "created", detail: row }),
     );
   };
-  stored("orphan", "respondent", { cause: "carried" });
+  const raises = [{ actorID: "owner", at }];
+  stored("orphan", "respondent", { cause: "carried", raises });
   stored("foreign", "outsider", { workID: ticket.ticketID });
+  const theirs = outsider.work.create({ title: "Outsider's request", ownerID: "owner" });
+  stored("elsewhere", "respondent", { workID: theirs.ticketID });
   const orphan = ask(outsider.work.get({ askID: "orphan", history: true }));
-  assert.equal(Object.hasOwn(orphan, "cause"), false);
-  assert.deepEqual(orphan.raises, []);
+  for (const field of ["cause", "raises"]) assert.equal(Object.hasOwn(orphan, field), false);
+  assert.deepEqual(orphan.history?.[0]?.detail.raises, raises);
   assert.equal(orphan.history?.[0]?.detail.cause, "carried");
   assert.deepEqual(
     work(outsider.work.get({ ticketID: ticket.ticketID })).asks?.map((row) => row.formID),
@@ -355,17 +356,21 @@ test("an ask sits on Work its asker owns, and an older ask reads where it was le
   );
   assert.deepEqual(
     requester.work.asks({ requesterID: "respondent" }).items.map((row) => row.formID),
-    ["orphan"],
+    ["orphan", "elsewhere"],
   );
-  // An older ask with no Work routes like any ask: respondent's to its manager, owner.
-  assert.deepEqual(
-    requester.work.asks({ routedTo: "owner" }).items.map((row) => row.formID),
-    ["orphan"],
-  );
+  // An older ask with no Work goes to the person; one by another Actor goes to the Work's requester.
+  const routed = (actorID: string) =>
+    requester.work.asks({ routedTo: actorID }).items.map((row) => row.formID);
+  assert.deepEqual(routed("owner"), []);
+  assert.deepEqual(routed("outsider"), ["elsewhere"]);
+  assert.deepEqual(routed("requester"), [linked.formID, "orphan", "foreign"]);
   assert.equal(
     ask(owner.work.answer({ askID: "orphan", answers: { answer: "yes" } })).status,
     "resolved",
   );
+  // The write stores the ask without what this build leaves unread.
+  for (const field of ["cause", "raises"])
+    assert.equal(Object.hasOwn(f.store.forms.get("orphan") ?? {}, field), false);
   assert.throws(
     () =>
       owner.work.answer({ askID: linked.formID, ticketID: own.ticketID, answers: { answer: "x" } }),
@@ -651,57 +656,25 @@ test("shared Work/Form AND filters precede pagination; awaiting means open, desi
   assert.deepEqual(f.as("outsider").work.asks({ ...query, limit: 100 }).items, [pending, last]);
 });
 
-test("canonical membership includes deep and closed ancestry under the actual active caller", () => {
+test("the host names the person, read under the actual active caller", () => {
   const f = fixtureAuthority();
-  const template = f.rows.get("respondent");
-  assert.ok(template);
-  let parent = "respondent";
-  for (let i = 0; i < 25; i++) {
-    const id = `closed-${i}`;
-    f.rows.set(id, { ...template, actorID: id, state: "closed" });
-    f.managers.set(id, parent);
-    parent = id;
-  }
-  for (const id of ["owner", "respondent"]) {
-    const row = f.rows.get(id);
-    assert.ok(row);
-    f.rows.set(id, { ...row, state: "closed" });
-  }
-  const principals: string[] = [];
-  const actors = createActors(
-    {
-      ...f.authority,
-      get(callerID, actorID) {
-        assert.equal(actorID, callerID, "membership must not resolve selected profiles");
-        return f.rows.get(actorID);
-      },
-      within(callerID, actorID, ancestorID) {
-        principals.push(callerID);
-        return f.authority.within(callerID, actorID, ancestorID);
-      },
-    },
-    "outsider",
+  const actors = createActors(f.authority, "outsider");
+  assert.equal(actors.person(), "requester");
+  assert.equal(
+    createActors({ ...f.authority, person: () => " owner " }, "outsider").person(),
+    "owner",
   );
-  assert.equal(actors.within(` ${parent} `, " owner "), true);
-  assert.equal(actors.within("owner", "owner"), true);
-  assert.equal(actors.within(parent, parent), true);
-  assert.equal(actors.within("outsider", "owner"), false);
-  assert.equal(actors.within("requester", "owner"), false);
-  for (const [member, anchor] of [
-    ["absent", "owner"],
-    ["owner", "absent"],
-    ["absent", "absent"],
-  ])
-    assert.equal(actors.within(member as string, anchor as string), false);
-  assert.ok(principals.every((id) => id === "outsider"));
-  assert.throws(() => actors.within("", "owner"), rejects("invalid_input"));
   assert.throws(
-    () => createActors(f.authority, "owner").within(parent, "owner"),
-    rejects("forbidden"),
+    () => createActors({ ...f.authority, person: () => " " }, "outsider").person(),
+    rejects("invalid_input"),
   );
+  const row = f.rows.get("outsider");
+  assert.ok(row);
+  f.rows.set("outsider", { ...row, state: "closed" });
+  assert.throws(() => actors.person(), rejects("forbidden"));
 });
 
-test("Work subtree filters intersect before sparse pages and retain closed deep histories after reassignment", (t) => {
+test("Work filters intersect before sparse pages and retain closed histories after reassignment", (t) => {
   const f = fixture(t);
   const requester = f.as("owner");
   const observer = f.as("outsider");
@@ -714,17 +687,8 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     });
     if (i % 3 === 1) expected.push(row);
   }
-  const template = f.rows.get("respondent");
-  assert.ok(template);
-  let deep = "respondent";
-  for (let i = 0; i < 25; i++) {
-    const id = `deep-${i}`;
-    f.rows.set(id, { ...template, actorID: id });
-    f.managers.set(id, deep);
-    deep = id;
-  }
-  const ticket = requester.work.create({ title: "Retained deep result", ownerID: deep });
-  const submitted = f.as(deep).work.submit({
+  const ticket = requester.work.create({ title: "Retained result", ownerID: "respondent" });
+  const submitted = f.as("respondent").work.submit({
     ticketID: ticket.ticketID,
     expectedRevision: 1,
     result: "Evidence",
@@ -742,8 +706,6 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
   const query = {
     ownerID: "respondent",
     requesterID: "owner",
-    ownerWithin: "owner",
-    requesterWithin: "owner",
     status: ["open" as const],
     limit: 2,
   };
@@ -754,13 +716,16 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     assert.equal(page.next === null, i + 2 >= expected.length);
     after = page.next ?? undefined;
   }
-  assert.deepEqual(observer.work.list({ ...query, ownerWithin: "outsider" }).items, []);
-  assert.deepEqual(observer.work.list({ ...query, requesterWithin: "outsider" }).items, []);
-  assert.deepEqual(observer.work.list({ ownerWithin: "absent" }).items, []);
+  assert.deepEqual(observer.work.list({ ...query, ownerID: "absent" }).items, []);
   assert.equal(
-    observer.work.list({ ownerWithin: "owner", requesterWithin: "outsider" }).items.length,
+    observer.work.list({ ...query, requesterID: "outsider", limit: 100 }).items.length,
     7,
   );
+  assert.equal(
+    observer.work.list({ ownerID: ["respondent", "outsider"], requesterID: "owner" }).items.length,
+    15,
+  );
+  assert.throws(() => observer.work.list({ ownerID: [] }), rejects("invalid_input"));
   const first = expected[0];
   assert.ok(first);
   assert.throws(
@@ -789,19 +754,19 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
     text: "Open to organization views",
   });
   assert.deepEqual(observer.messages.get({ messageID: openMessage.messageID }), openMessage);
-  for (const [id, row] of f.rows)
-    if (f.authority.within("outsider", id, "owner")) f.rows.set(id, { ...row, state: "closed" });
+  for (const id of ["owner", "respondent"]) {
+    const row = f.rows.get(id);
+    assert.ok(row);
+    f.rows.set(id, { ...row, state: "closed" });
+  }
   f.reopen();
   assert.deepEqual(
     f.as("outsider").work.list({ ...query, limit: 100 }).items,
     expected.slice(1).map(listed),
   );
-  assert.deepEqual(
-    f
-      .as("outsider")
-      .work.list({ ownerWithin: "owner", requesterWithin: "owner", status: ["accepted"] }).items,
-    [listed(accepted)],
-  );
+  assert.deepEqual(f.as("outsider").work.list({ ...query, status: ["accepted"] }).items, [
+    listed(accepted),
+  ]);
   assert.deepEqual(f.as("outsider").work.get({ ticketID: first.ticketID }), listed(moved));
   assert.equal(moved.history, undefined);
   const histories = [first, accepted].map(
@@ -810,31 +775,7 @@ test("Work subtree filters intersect before sparse pages and retain closed deep 
   assert.deepEqual(histories, [2, 3]);
 });
 
-test("subtree filters read membership once per Actor, not once per row", (t) => {
-  const f = fixture(t);
-  const requester = f.as("requester");
-  for (let i = 0; i < 30; i++)
-    requester.work.create({ title: `Row ${i}`, ownerID: i % 2 === 0 ? "owner" : "outsider" });
-  const within = f.authority.within;
-  let reads = 0;
-  f.authority.within = (...args) => {
-    reads++;
-    return within(...args);
-  };
-  assert.equal(requester.work.list({ ownerWithin: "owner", limit: 100 }).items.length, 15);
-  assert.equal(reads, 2);
-  reads = 0;
-  assert.equal(
-    requester.work.list({ ownerID: "owner", ownerWithin: "requester" }).items.length,
-    15,
-  );
-  assert.equal(reads, 1);
-  reads = 0;
-  assert.equal(requester.work.list({ requesterWithin: "requester" }).items.length, 30);
-  assert.equal(reads, 1);
-});
-
-test("a subtree list reads up to the head it captured while another connection writes", (t) => {
+test("a list reads up to the head it captured while another connection writes", (t) => {
   const f = fixture(t);
   const first = f.as("requester").work.create({ title: "Before the read", ownerID: "owner" });
   const other = f.second();
@@ -844,20 +785,20 @@ test("a subtree list reads up to the head it captured while another connection w
     forms: f.store.forms,
     work: {
       ...f.store.work,
-      values(column, filter) {
-        const values = f.store.work.values(column, filter);
+      where(filter) {
         // A new owner's Work, then a known owner's, both committed before the rows are read.
         for (const ownerID of ["respondent", "owner"])
           written.push(other.work.create({ title: "During the read", ownerID }).ticketID);
-        return values;
+        return f.store.work.where(filter);
       },
     },
   });
-  assert.deepEqual(work.list({ ownerWithin: "requester" }).items, [listed(first)]);
+  const owners = { ownerID: ["owner", "respondent"] };
+  assert.deepEqual(work.list(owners).items, [listed(first)]);
   assert.deepEqual(
     f
       .as("requester")
-      .work.list({ ownerWithin: "requester" })
+      .work.list(owners)
       .items.map((row) => row.ticketID),
     [first.ticketID, ...written],
   );
@@ -965,13 +906,12 @@ test("an ask is answered by any Actor and resolves on the first answer unless it
   );
 });
 
-test("only the asker's managers answer an approval, up to the root and never the asker", (t) => {
+test("only the Actor an approval is routed to answers it, never its asker", (t) => {
   const f = fixture(t);
-  const approval = (by: string) => {
-    const ticket = f.as(by).work.create({ title: "Migrate" });
-    return ask(
+  const approval = (by: string, ticketID: string) =>
+    ask(
       f.as(by).work.update({
-        ticketID: ticket.ticketID,
+        ticketID,
         ask: {
           title: "Run the migration?",
           approval: true,
@@ -986,133 +926,98 @@ test("only the asker's managers answer an approval, up to the root and never the
         },
       }),
     );
+  const answer = (by: string, askID: string) =>
+    ask(f.as(by).work.answer({ askID, answers: { decision: "Run" } }));
+  const refused = (askID: string, ...by: string[]) => {
+    for (const id of by) assert.throws(() => answer(id, askID), rejects("forbidden"));
   };
-  const answer = { answers: { decision: "Run" } };
-  const asked = approval("respondent");
+  // On Work outsider requested of owner, only outsider answers owner's approval.
+  const requested = f.as("outsider").work.create({ title: "Migrate", ownerID: "owner" });
+  const asked = approval("owner", requested.ticketID);
   assert.equal(asked.approval, true);
-  for (const by of ["respondent", "outsider"])
-    assert.throws(
-      () => f.as(by).work.answer({ askID: asked.formID, ...answer }),
-      rejects("forbidden"),
-    );
+  refused(asked.formID, "owner", "respondent", "requester");
+  assert.equal(answer("outsider", asked.formID).status, "resolved");
+  // On Work its asker requested itself, only the person answers.
+  const own = f.as("owner").work.create({ title: "Own migration" });
+  const self = approval("owner", own.ticketID);
+  refused(self.formID, "owner", "outsider");
+  assert.equal(answer("requester", self.formID).status, "resolved");
+  // Once the requester is closed, the person answers in its place.
+  const later = approval("owner", requested.ticketID);
+  const outsider = f.rows.get("outsider");
+  assert.ok(outsider);
+  f.rows.set("outsider", { ...outsider, state: "closed" });
+  refused(later.formID, "owner", "respondent");
+  assert.equal(answer("requester", later.formID).status, "resolved");
+  // The person's approval on Work it requested itself routes to the person, which never answers its
+  // own: it stays open until the person closes it.
+  const person = f.as("requester").work.create({ title: "The person's migration" });
+  const mine = approval("requester", person.ticketID);
+  refused(mine.formID, "requester", "owner");
   assert.equal(
-    ask(f.as("owner").work.answer({ askID: asked.formID, ...answer })).status,
-    "resolved",
+    ask(
+      f.as("requester").work.update({
+        close: { askID: mine.formID, status: "cancelled", resolution: "Decided myself" },
+      }),
+    ).status,
+    "cancelled",
   );
-  const deeper = approval("respondent");
-  assert.equal(
-    ask(f.as("requester").work.answer({ askID: deeper.formID, ...answer })).status,
-    "resolved",
-  );
-  assert.throws(() => approval("requester"), rejects("forbidden"));
 });
 
-test("a raise passes an open ask one manager up, past closed managers, and never resolves it", (t) => {
+test("an ask goes to its Work's requester, or to the person when its asker requested the Work", (t) => {
   const f = fixture(t);
-  // respondent reports to owner, who reports to the root, requester.
-  const ticket = f.as("respondent").work.create({ title: "Pick a region" });
   const question = {
     title: "Which region?",
     fields: [{ name: "region", label: "Region", required: true }],
   };
-  const asked = ask(f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }));
+  const asks = (by: string, ticketID: string) =>
+    ask(f.as(by).work.update({ ticketID, ask: question }));
   const routed = (actorID: string) =>
     f
-      .as("outsider")
+      .as("respondent")
       .work.asks({ routedTo: actorID })
       .items.map((row) => row.formID);
-  assert.deepEqual(routed("owner"), [asked.formID]);
-  assert.deepEqual(routed("requester"), []);
-  // An Actor's own asks route to its manager, never to itself.
-  const mine = f.as("owner").work.create({ title: "Owner's own" });
-  const own = ask(f.as("owner").work.update({ ticketID: mine.ticketID, ask: question }));
-  assert.deepEqual(routed("owner"), [asked.formID]);
-  assert.deepEqual(routed("requester"), [own.formID]);
-  const page = f.as("outsider").work.asks({ routedTo: "requester", limit: 1 });
-  assert.deepEqual(page.items, [own]);
-  assert.equal(page.next, null);
-  f.as("owner").work.update({
-    close: { askID: own.formID, status: "cancelled", resolution: "Mine" },
-  });
-  for (const by of ["requester", "respondent", "outsider"])
-    assert.throws(
-      () => f.as(by).work.answer({ askID: asked.formID, raise: true }),
-      rejects("forbidden"),
-    );
-  const raised = ask(f.as("owner").work.answer({ askID: asked.formID, raise: true }));
-  assert.equal(raised.status, "open");
-  assert.deepEqual(f.as("outsider").work.asks({ answeredBy: "owner" }).items, []);
-  assert.deepEqual(raised.raises, [{ actorID: "owner", at: raised.updatedAt }]);
+  // owner asks on Work outsider requested of it: the ask goes to outsider.
+  const requested = f.as("outsider").work.create({ title: "Pick a region", ownerID: "owner" });
+  const asked = asks("owner", requested.ticketID);
+  assert.deepEqual(routed("outsider"), [asked.formID]);
   assert.deepEqual(routed("owner"), []);
-  assert.deepEqual(routed("requester"), [asked.formID]);
-  assert.deepEqual(
-    work(f.as("outsider").work.get({ askID: asked.formID, history: true })).asks?.[0]?.history?.at(
-      -1,
-    )?.action,
-    "raised",
-  );
-  // The root raises nothing: it has no manager.
-  assert.throws(
-    () => f.as("requester").work.answer({ askID: asked.formID, raise: true }),
-    rejects("forbidden"),
-  );
-  const answered = ask(
-    f.as("owner").work.answer({ askID: asked.formID, answers: { region: "eu-west" } }),
-  );
-  assert.deepEqual(answered.raises, raised.raises);
-  assert.equal(answered.status, "resolved");
   assert.deepEqual(routed("requester"), []);
-  assert.throws(
-    () => f.as("requester").work.answer({ askID: asked.formID, raise: true }),
-    rejects("conflict"),
+  // An Actor's asks on Work it requested itself go to the person, never to itself.
+  const own = f.as("respondent").work.create({ title: "Respondent's own" });
+  const mine = asks("respondent", own.ticketID);
+  assert.deepEqual(routed("respondent"), []);
+  assert.deepEqual(routed("requester"), [mine.formID]);
+  // The person asks like any Actor: on Work another Actor requested, the ask goes to that Actor;
+  // on Work it requested itself, to the person, which answers it.
+  const forPerson = f
+    .as("respondent")
+    .work.create({ title: "For the person", ownerID: "requester" });
+  const theirs = asks("requester", forPerson.ticketID);
+  const personWork = f.as("requester").work.create({ title: "The person's own" });
+  const itself = asks("requester", personWork.ticketID);
+  assert.deepEqual(routed("respondent"), [theirs.formID]);
+  assert.deepEqual(routed("requester"), [mine.formID, itself.formID]);
+  const page = f.as("outsider").work.asks({ routedTo: "requester", limit: 1 });
+  assert.deepEqual(page.items, [mine]);
+  assert.deepEqual(f.as("outsider").work.asks({ routedTo: "requester", after: next(page) }).items, [
+    itself,
+  ]);
+  assert.equal(
+    ask(f.as("requester").work.answer({ askID: itself.formID, answers: { region: "eu" } })).status,
+    "resolved",
   );
-  // A closed manager is skipped: the ask routes to the nearest open one.
-  const skipped = ask(f.as("respondent").work.update({ ticketID: ticket.ticketID, ask: question }));
-  const owner = f.rows.get("owner");
-  assert.ok(owner);
-  f.rows.set("owner", { ...owner, state: "closed" });
-  assert.deepEqual(routed("requester"), [skipped.formID]);
+  assert.deepEqual(routed("requester"), [mine.formID]);
   assert.deepEqual(
-    f.as("requester").work.asks({ routedTo: "requester", status: ["resolved"] }).items,
+    f.as("respondent").work.asks({ routedTo: "requester", status: ["resolved"] }).items,
     [],
   );
-  assert.throws(
-    () => f.as("requester").work.answer({ askID: skipped.formID, raise: true }),
-    rejects("forbidden"),
-  );
-});
-
-test("a closed manager's stand-in raises an ask routed past it", (t) => {
-  const f = fixture(t);
-  // deep reports to respondent, which reports to owner, under the root, requester.
-  const template = f.rows.get("respondent");
-  assert.ok(template);
-  f.rows.set("deep", { ...template, actorID: "deep", name: "Deep" });
-  f.managers.set("deep", "respondent");
-  const ticket = f.as("deep").work.create({ title: "Deep work" });
-  const asked = ask(
-    f.as("deep").work.update({
-      ticketID: ticket.ticketID,
-      ask: { title: "Proceed?", fields: [{ name: "x", label: "Proceed?", required: true }] },
-    }),
-  );
-  f.rows.set("respondent", { ...template, state: "closed" });
-  assert.throws(
-    () => f.as("requester").work.answer({ askID: asked.formID, raise: true }),
-    rejects("forbidden"),
-  );
-  const raised = ask(f.as("owner").work.answer({ askID: asked.formID, raise: true }));
-  assert.deepEqual(
-    raised.raises.map((raise) => raise.actorID),
-    ["owner"],
-  );
-  assert.deepEqual(
-    f
-      .as("outsider")
-      .work.asks({ routedTo: "requester" })
-      .items.map((row) => row.formID),
-    [asked.formID],
-  );
+  // A closed requester's asks go to the person.
+  const outsider = f.rows.get("outsider");
+  assert.ok(outsider);
+  f.rows.set("outsider", { ...outsider, state: "closed" });
+  assert.deepEqual(routed("outsider"), []);
+  assert.deepEqual(routed("requester"), [asked.formID, mine.formID]);
 });
 
 test("a cancel that also reassigns cancels the open asks as cancelled", (t) => {
@@ -1137,7 +1042,7 @@ test("a cancel that also reassigns cancels the open asks as cancelled", (t) => {
   assert.equal(after?.resolution?.reason, "cancelled");
 });
 
-test("the asker closes its ask, or its nearest open manager once it is closed, on frozen Work too", (t) => {
+test("the asker closes its ask, or the person once the asker is closed, on frozen Work too", (t) => {
   const f = fixture(t);
   const ticket = f.as("requester").work.create({ title: "Review", ownerID: "respondent" });
   const question = {
@@ -1196,8 +1101,8 @@ test("the asker closes its ask, or its nearest open manager once it is closed, o
   const respondent = f.rows.get("respondent");
   assert.ok(respondent);
   f.rows.set("respondent", { ...respondent, state: "closed" });
-  assert.throws(() => f.as("requester").work.update(close("left")), rejects("forbidden"));
-  assert.equal(ask(f.as("owner").work.update(close("left"))).status, "resolved");
+  assert.throws(() => f.as("owner").work.update(close("left")), rejects("forbidden"));
+  assert.equal(ask(f.as("requester").work.update(close("left"))).status, "resolved");
 });
 
 test("cancelling Work cancels its open asks with the reason", (t) => {
@@ -1301,15 +1206,15 @@ test("an Actor's own Work: defaults to itself, edits without revisions and compl
 
 test("Work another Actor requested waits for review; accepting needs no comment", (t) => {
   const f = fixture(t);
-  const manager = f.as("requester");
-  const report = f.as("owner");
-  const ticket = manager.work.create({
+  const requester = f.as("requester");
+  const owner = f.as("owner");
+  const ticket = requester.work.create({
     title: "Assigned",
     goal: "Ship it",
     ownerID: "owner",
     waitsOn: { actorID: "respondent" },
   });
-  assert.deepEqual(manager.work.list({ waitsOnActorID: "respondent" }), {
+  assert.deepEqual(requester.work.list({ waitsOnActorID: "respondent" }), {
     items: [listed(ticket)],
     next: null,
     actors: {
@@ -1319,48 +1224,48 @@ test("Work another Actor requested waits for review; accepting needs no comment"
     },
   });
   assert.throws(
-    () => report.work.update({ ticketID: ticket.ticketID, expectedRevision: 1, goal: "Mine" }),
+    () => owner.work.update({ ticketID: ticket.ticketID, expectedRevision: 1, goal: "Mine" }),
     rejects("forbidden"),
   );
   assert.throws(
-    () => manager.work.update({ ticketID: ticket.ticketID, title: "Not the owner's" }),
+    () => requester.work.update({ ticketID: ticket.ticketID, title: "Not the owner's" }),
     rejects("forbidden"),
   );
   const regoal = work(
-    manager.work.update({
+    requester.work.update({
       ticketID: ticket.ticketID,
       expectedRevision: 1,
       goal: "Ship it twice",
     }),
   );
-  const first = report.work.submit({ ticketID: ticket.ticketID, result: "Shipped" });
+  const first = owner.work.submit({ ticketID: ticket.ticketID, result: "Shipped" });
   assert.equal(first.status, "submitted");
   assert.equal(first.completedAt, undefined);
   assert.ok(first.submission);
   assert.throws(
     () =>
-      manager.work.answer({
+      requester.work.answer({
         askID: first.submission?.submissionID ?? "",
         answers: { verdict: "changes_requested" },
       }),
     rejects("invalid_input"),
   );
   const changes = work(
-    manager.work.answer({
+    requester.work.answer({
       askID: first.submission.submissionID,
       answers: { verdict: "changes_requested" },
       note: "Once more",
     }),
   );
   assert.equal(changes.completedAt, undefined);
-  const second = report.work.submit({
+  const second = owner.work.submit({
     ticketID: ticket.ticketID,
     expectedRevision: changes.revision,
     result: "Shipped twice",
   });
   assert.throws(
     () =>
-      manager.work.answer({
+      requester.work.answer({
         askID: first.submission?.submissionID ?? "",
         ticketID: ticket.ticketID,
         answers: { verdict: "accepted" },
@@ -1369,14 +1274,14 @@ test("Work another Actor requested waits for review; accepting needs no comment"
   );
   assert.throws(
     () =>
-      manager.work.answer({
+      requester.work.answer({
         askID: first.submission?.submissionID ?? "",
         answers: { verdict: "accepted" },
       }),
     rejects("not_found"),
   );
   const accepted = work(
-    manager.work.answer({
+    requester.work.answer({
       askID: second.submission?.submissionID ?? "",
       answers: { verdict: "accepted" },
     }),
@@ -1537,32 +1442,24 @@ test("the requester cancels Work while it can move, and cancelled Work is frozen
   );
 });
 
-test("a closed requester's rights pass to its nearest open manager, past closed ones", (t) => {
+test("a closed requester's rights pass to the person", (t) => {
   const f = fixture(t);
-  // respondent reports to owner, who reports to the root, requester.
   const asked = f.as("respondent").work.create({ title: "Submitted", ownerID: "outsider" });
   const open = f.as("respondent").work.create({ title: "Not started", ownerID: "outsider" });
   const sent = f.as("outsider").work.submit({ ticketID: asked.ticketID, result: "Done" });
-  const close = (id: string) => {
-    const row = f.rows.get(id);
-    assert.ok(row);
-    f.rows.set(id, { ...row, state: "closed" });
-  };
   // While the requester is open, its rights stay its own.
-  assert.throws(
-    () =>
-      f.as("owner").work.update({ ticketID: open.ticketID, expectedRevision: 1, goal: "Early" }),
-    rejects("forbidden"),
-  );
-  close("respondent");
-  const submissionID = sent.submission?.submissionID ?? "";
-  const verdict = { askID: submissionID, answers: { verdict: "accepted" } };
-  for (const id of ["requester", "outsider"])
-    assert.throws(() => f.as(id).work.answer(verdict), rejects("forbidden"));
   const goal = { ticketID: open.ticketID, expectedRevision: 1, goal: "Rescued" };
   assert.throws(() => f.as("requester").work.update(goal), rejects("forbidden"));
-  assert.equal(work(f.as("owner").work.update(goal)).goal, "Rescued");
-  close("owner");
+  const respondent = f.rows.get("respondent");
+  assert.ok(respondent);
+  f.rows.set("respondent", { ...respondent, state: "closed" });
+  const submissionID = sent.submission?.submissionID ?? "";
+  const verdict = { askID: submissionID, answers: { verdict: "accepted" } };
+  for (const id of ["owner", "outsider"]) {
+    assert.throws(() => f.as(id).work.answer(verdict), rejects("forbidden"));
+    assert.throws(() => f.as(id).work.update(goal), rejects("forbidden"));
+  }
+  assert.equal(work(f.as("requester").work.update(goal)).goal, "Rescued");
   assert.equal(f.as("requester").work.answer(verdict).status, "accepted");
   const moved = work(
     f.as("requester").work.update({
@@ -1580,20 +1477,6 @@ test("a closed requester's rights pass to its nearest open manager, past closed 
     }).status,
     "cancelled",
   );
-  // A manager chain that loops through closed Actors leaves no one the requester's rights.
-  const stranded = f.as("outsider").work.create({ title: "Looped", ownerID: "requester" });
-  f.managers.set("outsider", "respondent");
-  f.managers.set("owner", "respondent");
-  close("outsider");
-  assert.throws(
-    () =>
-      f.as("requester").work.update({
-        ticketID: stranded.ticketID,
-        expectedRevision: 1,
-        goal: "Looped",
-      }),
-    rejects("forbidden"),
-  );
 });
 
 test("a submission is answered by its ID with a verdict, and its note is the comment", (t) => {
@@ -1609,15 +1492,8 @@ test("a submission is answered by its ID with a verdict, and its note is the com
     (error: unknown) =>
       error instanceof WorkspaceError && /^answers\.verdict: /.test(error.message),
   );
-  for (const input of [
-    { askID },
-    { askID, raise: true as const, answers: { verdict: "accepted" } },
-  ])
-    assert.throws(() => requester.work.answer(input), rejects("invalid_input"));
-  assert.throws(
-    () => requester.work.answer({ askID, raise: true }),
-    (error: unknown) => error instanceof WorkspaceError && /can't be raised/.test(error.message),
-  );
+  for (const input of [{ askID }, { askID, raise: true, answers: { verdict: "accepted" } }])
+    assert.throws(() => requester.work.answer(input as never), rejects("invalid_input"));
   assert.throws(
     () => requester.work.answer({ askID: "absent", answers: { verdict: "accepted" } }),
     rejects("not_found"),
@@ -1698,8 +1574,7 @@ test("canonical visibility, active callers and retained reads after counterparty
   const restricted = bindWorkspace(
     {
       get: (caller, id) => (caller === id ? f.rows.get(id) : undefined),
-      within: f.authority.within,
-      manager: f.authority.manager,
+      person: f.authority.person,
     },
     f.store,
     "requester",
@@ -1714,76 +1589,68 @@ test("canonical visibility, active callers and retained reads after counterparty
     actors: {},
   });
   assert.deepEqual(restricted.work.asks({ requesterID: "unknown" }).items, []);
-  // Routing walks past Actors the caller can't see, as names() leaves them out: respondent's ask
-  // routes through owner, which this authority hides, to the root.
-  const deeper = f.as("respondent").work.create({ title: "Respondent's" });
-  const routed = ask(
-    f.as("respondent").work.update({
-      ticketID: deeper.ticketID,
-      ask: { title: "Deeper", fields: [{ name: "x", label: "Deeper", required: false }] },
-    }),
-  );
-  assert.deepEqual(
-    restricted.work.asks({ routedTo: "requester" }).items.map((row) => row.formID),
-    [form.formID, routed.formID],
-  );
 });
 
-test("rights never pass past an Actor the caller can't see; only the routed read walks past it", (t) => {
+test("a requester the caller can't see refuses its stand-in's writes; only the routed read passes it", (t) => {
   const f = fixture(t);
-  // outsider and owner report to the root, requester; respondent to owner; deep to respondent.
-  const template = f.rows.get("respondent");
-  assert.ok(template);
-  f.rows.set("deep", { ...template, actorID: "deep", name: "Deep" });
-  f.managers.set("deep", "respondent");
   const question = { title: "Go?", fields: [{ name: "x", label: "Go?", required: true }] };
   const requested = f.as("outsider").work.create({ title: "Outsider's request", ownerID: "owner" });
   const sent = work(f.as("owner").work.submit({ ticketID: requested.ticketID, result: "Done" }));
   const open = f.as("outsider").work.create({ title: "Outsider's other", ownerID: "owner" });
   const own = f.as("outsider").work.create({ title: "Outsider's own" });
   const outsiderAsk = ask(f.as("outsider").work.update({ ticketID: own.ticketID, ask: question }));
-  const deepWork = f.as("deep").work.create({ title: "Deep's own" });
-  const deepAsk = ask(f.as("deep").work.update({ ticketID: deepWork.ticketID, ask: question }));
+  const approval = ask(
+    f.as("owner").work.update({ ticketID: open.ticketID, ask: { ...question, approval: true } }),
+  );
   // A host that hides one open Actor from every caller.
   const hiding = (hidden: string, caller: string) =>
     bindWorkspace(
       {
         get: (_caller, id) => (id === hidden ? undefined : f.rows.get(id)),
-        within: f.authority.within,
-        manager: f.authority.manager,
+        person: f.authority.person,
       },
       f.store,
       caller,
     ).work;
-  const root = hiding("outsider", "requester");
+  const person = hiding("outsider", "requester");
   for (const write of [
-    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, goal: "Taken over" }),
-    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, ownerID: "respondent" }),
-    () => root.update({ ticketID: open.ticketID, expectedRevision: 1, status: "cancelled" }),
+    () => person.update({ ticketID: open.ticketID, expectedRevision: 1, goal: "Taken over" }),
+    () => person.update({ ticketID: open.ticketID, expectedRevision: 1, ownerID: "respondent" }),
+    () => person.update({ ticketID: open.ticketID, expectedRevision: 1, status: "cancelled" }),
     () =>
-      root.update({
+      person.update({
         close: { askID: outsiderAsk.formID, status: "cancelled", resolution: "Mine" },
       }),
     () =>
-      root.answer({
+      person.answer({
         askID: sent.submission?.submissionID ?? "",
         answers: { verdict: "accepted" },
       }),
+    () => person.answer({ askID: approval.formID, answers: { x: "Go" } }),
   ])
     assert.throws(write, rejects("not_found"));
-  const manager = hiding("respondent", "owner");
-  assert.throws(() => manager.answer({ askID: deepAsk.formID, raise: true }), rejects("not_found"));
-  // The routed read alone counts the hidden respondent as closed and walks on to owner.
+  // The routed read alone counts the hidden outsider as closed, so its asks go to the person.
   assert.deepEqual(
-    manager.asks({ routedTo: "owner" }).items.map((row) => row.formID),
-    [deepAsk.formID],
+    person.asks({ routedTo: "requester" }).items.map((row) => row.formID),
+    [outsiderAsk.formID, approval.formID],
+  );
+  const read = f.as("respondent").work;
+  assert.deepEqual(
+    read.asks({ routedTo: "requester" }).items.map((row) => row.formID),
+    [outsiderAsk.formID],
+  );
+  assert.deepEqual(
+    read.asks({ routedTo: "outsider" }).items.map((row) => row.formID),
+    [approval.formID],
   );
   // Nothing above was written.
-  const read = f.as("outsider").work;
   assert.equal(read.get({ ticketID: open.ticketID }).revision, 1);
   assert.equal(work(read.get({ ticketID: requested.ticketID })).status, "submitted");
+  assert.deepEqual(
+    work(read.get({ ticketID: open.ticketID })).asks?.map((row) => row.status),
+    ["open"],
+  );
   assert.equal(work(read.get({ askID: outsiderAsk.formID })).asks?.[0]?.status, "open");
-  assert.deepEqual(work(read.get({ askID: deepAsk.formID })).asks?.[0]?.raises, []);
 });
 
 test("lists name their Actors, go newest first and select by update time and several requesters", (t) => {
@@ -1848,22 +1715,7 @@ test("lists name their Actors, go newest first and select by update time and sev
   });
 });
 
-test("every contract carries the level that presents it", () => {
-  const levels = Object.fromEntries(
-    Object.entries({
-      ...MessageContracts,
-      ...WorkContracts,
-    }).map(([name, spec]) => [name, spec.level]),
-  );
-  assert.deepEqual(levels, {
-    message_send: "report",
-    message_get: "team",
-    message_list: "report",
-    work_create: "report",
-    work_get: "report",
-    work_list: "report",
-    work_update: "report",
-    work_submit: "report",
-    work_answer: "team",
-  });
+test("contracts carry no level", () => {
+  for (const spec of Object.values({ ...MessageContracts, ...WorkContracts }))
+    assert.deepEqual(Object.keys(spec), ["description", "input", "output", "writes"]);
 });

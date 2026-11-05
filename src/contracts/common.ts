@@ -3,9 +3,6 @@ import { z } from "zod";
 export const ID = z.string().trim().min(1).max(200);
 export const Text = z.string().trim().min(1).max(20000);
 export const Revision = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
-/** The smallest organization level that presents a contract; each level contains the one before. */
-export const Level = z.enum(["report", "team", "organization"]);
-export type Level = z.infer<typeof Level>;
 export const Limit = z.number().int().min(1).max(100).default(50);
 /** An opaque list position; it continues only the read and filter that issued it. */
 export const Next = z.string().trim().min(1).max(1000);
@@ -68,13 +65,12 @@ export function requireThat(
   if (!condition) throw new WorkspaceError(code, message);
 }
 export function contract<S extends z.ZodType>(
-  level: Level,
   description: string,
   input: S,
   output: z.ZodType,
   writes = false,
 ) {
-  return { level, description, input, output, writes };
+  return { description, input, output, writes };
 }
 export const listOf = (record: z.ZodType) =>
   z.strictObject({ items: z.array(record), next: Next.nullable(), actors: Actors });

@@ -1,4 +1,4 @@
-/** Canonical identity and membership; the module stores no Actors or credentials. */
+/** Canonical identity and the person; the module stores no Actors or credentials. */
 import {
   Actor,
   ActorQuery,
@@ -12,15 +12,15 @@ import {
 export interface ActorAuthority {
   /** Canonical visibility, including access to the admitted caller itself. */
   get(callerID: string, actorID: string): Actor | undefined;
-  /** Inclusive retained ancestry, including closed members/anchors; unknown IDs return false. */
-  within(callerID: string, actorID: string, ancestorID: string): boolean;
-  /** The retained manager, closed or not; null for the root and for unknown IDs. */
-  manager(callerID: string, actorID: string): string | null;
+  /**
+   * The person's Actor ID: it stands in for closed Actors and receives the asks on Work their asker
+   * requested itself.
+   */
+  person(): string;
 }
 export interface ActorsClient {
   get(input?: Input<typeof ActorQuery>): Actor;
-  within(actorID: string, ancestorID: string): boolean;
-  manager(actorID: string): string | null;
+  person(): string;
 }
 export function createActors(authority: ActorAuthority, callerID: string): ActorsClient {
   function caller(): Actor {
@@ -37,16 +37,9 @@ export function createActors(authority: ActorAuthority, callerID: string): Actor
       requireThat(actor, "not_found", "Actor not found");
       return parse(Actor, actor);
     },
-    within(actorID, ancestorID) {
-      const member = parse(ID, actorID);
-      const ancestor = parse(ID, ancestorID);
+    person() {
       caller();
-      return authority.within(callerID, member, ancestor);
-    },
-    manager(actorID) {
-      const member = parse(ID, actorID);
-      caller();
-      return authority.manager(callerID, member);
+      return parse(ID, authority.person());
     },
   };
 }
@@ -56,26 +49,18 @@ export function activeActor(actors: ActorsClient, actorID: string): Actor {
   return actor;
 }
 /**
- * The Actor itself while it is open; once it is closed, its nearest open manager, or null. This
- * decides who holds rights, so an Actor the caller can't see is refused (`not_found`), never passed.
+ * The Actor itself while it is open; once it is closed, the person. This decides who holds rights,
+ * so an Actor the caller can't see is refused (`not_found`), never passed.
  */
-export function standIn(actors: ActorsClient, actorID: string): string | null {
-  return walk(actors, actorID, (at) => actors.get({ actorID: at }).state === "active");
+export function standIn(actors: ActorsClient, actorID: string): string {
+  return actors.get({ actorID }).state === "active" ? actorID : actors.person();
 }
 /**
- * As standIn, for reads that route asks: an Actor the caller can't see counts as closed, so the walk
- * goes on past it. Never for authority.
+ * As standIn, for reads that route asks: an Actor the caller can't see counts as closed, so its asks
+ * go to the person. Never for authority.
  */
-export function routedStandIn(actors: ActorsClient, actorID: string): string | null {
-  return walk(actors, actorID, (at) => visible(actors, at)?.state === "active");
-}
-function walk(actors: ActorsClient, actorID: string, open: (actorID: string) => boolean) {
-  const seen = new Set<string>();
-  for (let at: string | null = actorID; at !== null && !seen.has(at); at = actors.manager(at)) {
-    if (open(at)) return at;
-    seen.add(at);
-  }
-  return null;
+export function routedStandIn(actors: ActorsClient, actorID: string): string {
+  return visible(actors, actorID)?.state === "active" ? actorID : actors.person();
 }
 function visible(actors: ActorsClient, actorID: string): Actor | undefined {
   try {
